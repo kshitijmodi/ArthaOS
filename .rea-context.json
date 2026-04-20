@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "text": "Tell me about this project",
+    "timestamp": "2026-04-20T20:31:59.328Z"
+  },
+  {
+    "role": "assistant",
+    "text": "There's a Product Requirements Document that likely has the real details. Let me read it.Here's what ArthaOS is:\n\n---\n\n**ArthaOS — Personal Financial Intelligence Copilot**\n\nA personal financial OS that acts as a reasoning + memory layer over all your financial data. It's not a chatbot — the PRD explicitly calls it a \"financial operating system.\"\n\n**Core Problem it solves:**\nFinancial data is fragmented across banks, credit cards, loans, insurance, subscriptions — all in inconsistent formats (PD",
+    "timestamp": "2026-04-20T20:31:59.371Z"
+  }
+]
