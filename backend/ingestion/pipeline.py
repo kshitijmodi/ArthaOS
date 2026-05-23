@@ -106,12 +106,31 @@ def ingest_file(path: Path, password: str = "") -> dict:
     logger.info("[Pipeline] Done: %s | %d transactions stored | validation: %s",
                 path.name, stored, validation.status)
 
+    # Trigger agent post-ingestion (non-blocking)
+    _trigger_agent_async()
+
     return {
         "status": validation.status,
         "file": path.name,
         "transactions_stored": stored,
         "warnings": validation.warnings,
     }
+
+
+def _trigger_agent_async():
+    """Fire-and-forget agent run after ingestion."""
+    import threading
+    def _run():
+        try:
+            from backend.agent.engine import run_agent
+            alert_ids = run_agent()
+            if alert_ids:
+                import asyncio
+                from backend.agent.notifier import push_new_alerts
+                asyncio.run(push_new_alerts(alert_ids))
+        except Exception as exc:
+            logger.warning("[Pipeline] Agent trigger failed: %s", exc)
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def ingest_directory(directory: Path | None = None) -> list[dict]:

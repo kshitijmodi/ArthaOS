@@ -62,8 +62,12 @@ async def lifespan(app: FastAPI):
     # Start file watcher in background thread
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, lambda: start_watcher(block=True))
+    # Start daily scheduler
+    from backend.scheduler import start_scheduler, stop_scheduler
+    start_scheduler()
     logger.info("[ArthaOS] Backend ready")
     yield
+    stop_scheduler()
 
 
 app = FastAPI(title="ArthaOS", version="1.0.0", lifespan=lifespan)
@@ -286,9 +290,75 @@ def trigger_email_fetch():
     return {"fetched": len(files), "results": results}
 
 
+@app.post("/agent/run")
+async def trigger_agent():
+    """Manually trigger the agent detection run."""
+    from backend.agent.engine import run_agent
+    from backend.agent.notifier import push_new_alerts
+    alert_ids = run_agent()
+    await push_new_alerts(alert_ids)
+    return {"new_alerts": len(alert_ids), "alert_ids": alert_ids}
+
+
+@app.get("/alerts/stats")
+def alert_stats():
+    with db() as conn:
+        row = conn.execute(
+            """SELECT
+                COUNT(*) FILTER (WHERE status='unread')    as unread,
+                COUNT(*) FILTER (WHERE status='dismissed') as dismissed,
+                COUNT(*) FILTER (WHERE status='snoozed')   as snoozed,
+                COUNT(*) FILTER (WHERE severity='high')    as high,
+                COUNT(*) FILTER (WHERE severity='medium')  as medium,
+                COUNT(*) FILTER (WHERE severity='low')     as low
+               FROM alerts"""
+        ).fetchone()
+    return dict(row)
+
+
 # ---------------------------------------------------------------------------
 # WebSocket — real-time alert push
 # ---------------------------------------------------------------------------
+
+@app.get("/analytics/monthly-trend")
+def monthly_trend():
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT strftime('%Y-%m', date) as month, ROUND(SUM(amount),2) as total
+               FROM transactions
+               WHERE transaction_type='debit'
+               GROUP BY month ORDER BY month DESC LIMIT 12"""
+        ).fetchall()
+    return {"data": [dict(r) for r in reversed(rows)]}
+
+
+@app.get("/analytics/category-breakdown")
+def category_breakdown():
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT category, ROUND(SUM(amount),2) as total
+               FROM transactions
+               WHERE transaction_type='debit'
+                 AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
+               GROUP BY category ORDER BY total DESC"""
+        ).fetchall()
+    return {"data": [dict(r) for r in rows]}
+
+
+@app.get("/analytics/month-comparison")
+def month_comparison():
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT category,
+                 ROUND(SUM(CASE WHEN strftime('%Y-%m',date)=strftime('%Y-%m','now') THEN amount ELSE 0 END),2) as this_month,
+                 ROUND(SUM(CASE WHEN strftime('%Y-%m',date)=strftime('%Y-%m',date('now','-1 month')) THEN amount ELSE 0 END),2) as last_month
+               FROM transactions
+               WHERE transaction_type='debit'
+                 AND date >= date('now','start of month','-1 month')
+               GROUP BY category ORDER BY this_month DESC"""
+        ).fetchall()
+    return {"data": [dict(r) for r in rows]}
+
 
 @app.websocket("/ws/alerts")
 async def ws_alerts(websocket: WebSocket):
