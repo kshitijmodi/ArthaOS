@@ -147,11 +147,11 @@ def fetch_gmail(since: datetime | None = None) -> list[Path]:
     service = build("gmail", "v1", credentials=creds)
     saved_files: list[Path] = []
 
-    # Build search query
+    # Build search query — cap first run to last 30 days
+    from datetime import timedelta
+    cutoff = since or (datetime.now(timezone.utc) - timedelta(days=30))
     query_parts = ["has:attachment filename:pdf"]
-    if since:
-        date_str = since.strftime("%Y/%m/%d")
-        query_parts.append(f"after:{date_str}")
+    query_parts.append(f"after:{cutoff.strftime('%Y/%m/%d')}")
     query = " ".join(query_parts)
 
     try:
@@ -230,9 +230,9 @@ def fetch_yahoo(since: datetime | None = None) -> list[Path]:
             date_str = since.strftime("%d-%b-%Y")
             _, data = mail.search(None, f'(SINCE "{date_str}")')
         else:
-            # First run: limit to last 6 months to avoid scanning entire mailbox
+            # First run: limit to last 30 days to avoid scanning entire mailbox
             from datetime import timedelta
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%d-%b-%Y")
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%d-%b-%Y")
             _, data = mail.search(None, f'(SINCE "{cutoff}")')
 
         msg_ids = data[0].split()
