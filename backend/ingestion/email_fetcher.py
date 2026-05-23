@@ -230,7 +230,10 @@ def fetch_yahoo(since: datetime | None = None) -> list[Path]:
             date_str = since.strftime("%d-%b-%Y")
             _, data = mail.search(None, f'(SINCE "{date_str}")')
         else:
-            _, data = mail.search(None, "ALL")
+            # First run: limit to last 6 months to avoid scanning entire mailbox
+            from datetime import timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%d-%b-%Y")
+            _, data = mail.search(None, f'(SINCE "{cutoff}")')
 
         msg_ids = data[0].split()
         logger.info("[Yahoo] Found %d candidate messages", len(msg_ids))
