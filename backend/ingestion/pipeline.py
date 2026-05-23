@@ -78,6 +78,10 @@ def ingest_file(path: Path, password: str = "") -> dict:
         )
         return {"status": "failed", "reason": parse_result.failure_reason, "file": path.name}
 
+    # Normalize before validation
+    from backend.processing.normalizer import normalize
+    parse_result.transactions = normalize(parse_result.transactions)
+
     validation = validate(parse_result)
 
     if validation.status == "fail":

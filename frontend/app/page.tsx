@@ -6,9 +6,10 @@ import QueryInterface from "@/components/QueryInterface";
 import TransactionTable from "@/components/TransactionTable";
 import IngestionStatus from "@/components/IngestionStatus";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
+import InsightsPanel from "@/components/InsightsPanel";
 import { cn } from "@/lib/utils";
 
-const TABS = ["Overview", "Analytics", "Transactions"] as const;
+const TABS = ["Overview", "Analytics", "Transactions", "Insights"] as const;
 type Tab = typeof TABS[number];
 
 export default function Dashboard() {
@@ -62,6 +63,8 @@ export default function Dashboard() {
         {tab === "Analytics" && <AnalyticsPanel />}
 
         {tab === "Transactions" && <TransactionTable />}
+
+        {tab === "Insights" && <InsightsPanel />}
       </main>
     </div>
   );

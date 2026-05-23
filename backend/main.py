@@ -320,6 +320,68 @@ def alert_stats():
 # WebSocket — real-time alert push
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Decision-support endpoints
+# ---------------------------------------------------------------------------
+
+class AffordabilityRequest(BaseModel):
+    amount: float
+
+@app.post("/insights/affordability")
+def affordability(req: AffordabilityRequest):
+    from backend.agent.insights import estimate_affordability
+    result = estimate_affordability(req.amount)
+    return {
+        "amount": result.amount,
+        "affordable": result.affordable,
+        "confidence": result.confidence,
+        "remaining_budget": result.remaining_budget,
+        "avg_monthly_spend": result.avg_monthly_spend,
+        "avg_monthly_income": result.avg_monthly_income,
+        "this_month_spend": result.this_month_spend,
+        "explanation": result.explanation,
+    }
+
+@app.get("/insights/optimisation")
+def optimisation():
+    from backend.agent.insights import generate_optimisation_suggestions
+    suggestions = generate_optimisation_suggestions()
+    return {"suggestions": [
+        {
+            "category": s.category,
+            "current_avg": s.current_avg,
+            "benchmark_pct": s.benchmark_pct,
+            "suggested_target": s.suggested_target,
+            "potential_saving": s.potential_saving,
+            "tip": s.tip,
+        }
+        for s in suggestions
+    ]}
+
+@app.get("/insights/recommendations")
+def recommendations():
+    from backend.agent.insights import generate_trend_recommendations
+    recs = generate_trend_recommendations()
+    return {"recommendations": [
+        {"type": r.type, "title": r.title, "body": r.body, "severity": r.severity}
+        for r in recs
+    ]}
+
+@app.post("/transactions/bulk-categorize")
+def bulk_categorize(body: dict):
+    from backend.processing.categorizer import apply_bulk_correction
+    ids = body.get("transaction_ids", [])
+    category = body.get("category", "")
+    count = apply_bulk_correction(ids, category)
+    return {"updated": count}
+
+@app.post("/categorizer/recategorize-misc")
+def recategorize_misc():
+    from backend.processing.categorizer import recategorize_miscellaneous
+    updated = recategorize_miscellaneous()
+    return {"updated": updated}
+
+
 @app.get("/analytics/monthly-trend")
 def monthly_trend():
     with db() as conn:
