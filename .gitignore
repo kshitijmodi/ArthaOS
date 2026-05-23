@@ -1,7 +1,40 @@
-node_modules/
+# Environment
+.env
+*.env
+
+# Gmail OAuth tokens
+gmail_token.json
+gmail_credentials.json
+
+# Data (local financial documents — never commit)
+data/statements/
+data/faiss_index/
+data/arthaos.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
 dist/
 build/
-.DS_Store
-*.log
-coverage/
+.pytest_cache/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
 .nyc_output/
+coverage/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+~$*

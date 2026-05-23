@@ -1,0 +1,315 @@
+"""
+ArthaOS FastAPI backend.
+Serves all dashboard data, handles queries from dashboard and WhatsApp,
+and pushes real-time alerts via WebSocket.
+"""
+import asyncio
+import json
+import logging
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from backend.config import STATEMENTS_DIR
+from backend.storage.database import init_db, db
+from backend.ingestion.watcher import start_watcher
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# WebSocket connection manager
+# ---------------------------------------------------------------------------
+
+class ConnectionManager:
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        self.active.remove(ws)
+
+    async def broadcast(self, data: dict):
+        dead = []
+        for ws in self.active:
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.active.remove(ws)
+
+manager = ConnectionManager()
+
+
+async def push_alert(alert: dict):
+    await manager.broadcast({"type": "alert", "data": alert})
+
+
+# ---------------------------------------------------------------------------
+# App lifespan — init DB and start watcher
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    # Start file watcher in background thread
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, lambda: start_watcher(block=True))
+    logger.info("[ArthaOS] Backend ready")
+    yield
+
+
+app = FastAPI(title="ArthaOS", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+class QueryRequest(BaseModel):
+    query: str
+
+class CategoryUpdateRequest(BaseModel):
+    category: str
+
+class SnoozeRequest(BaseModel):
+    days: int = 3
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/query")
+def query_endpoint(req: QueryRequest):
+    from backend.rag.pipeline import query
+    result = query(req.query)
+    return {
+        "answer": result.answer,
+        "low_confidence": result.low_confidence,
+        "sources": [{"source": s.get("source"), "score": s.get("score")} for s in result.sources],
+    }
+
+
+@app.get("/transactions")
+def get_transactions(
+    page: int = 1,
+    page_size: int = 50,
+    category: Optional[str] = None,
+    transaction_type: Optional[str] = None,
+    sort_by: str = "date",
+    sort_dir: str = "desc",
+):
+    allowed_sort = {"date", "amount", "category", "description"}
+    if sort_by not in allowed_sort:
+        sort_by = "date"
+    sort_dir = "DESC" if sort_dir.lower() == "desc" else "ASC"
+
+    filters = ["1=1"]
+    params: list = []
+    if category:
+        filters.append("category = ?")
+        params.append(category)
+    if transaction_type:
+        filters.append("transaction_type = ?")
+        params.append(transaction_type)
+
+    where = " AND ".join(filters)
+    offset = (page - 1) * page_size
+
+    with db() as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM transactions WHERE {where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM transactions WHERE {where} ORDER BY {sort_by} {sort_dir} LIMIT ? OFFSET ?",
+            params + [page_size, offset],
+        ).fetchall()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "transactions": [dict(r) for r in rows],
+    }
+
+
+@app.patch("/transactions/{tx_id}/category")
+def update_category(tx_id: int, req: CategoryUpdateRequest):
+    from backend.processing.categorizer import apply_correction
+    ok = apply_correction(tx_id, req.category)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid transaction ID or category")
+    return {"status": "updated"}
+
+
+@app.get("/alerts")
+def get_alerts(status: Optional[str] = None):
+    filters = ["1=1"]
+    params: list = []
+    if status:
+        filters.append("status = ?")
+        params.append(status)
+    # Re-activate snoozed alerts past their snooze time
+    filters_str = " AND ".join(filters)
+    with db() as conn:
+        conn.execute(
+            "UPDATE alerts SET status='unread' WHERE status='snoozed' AND snoozed_until <= datetime('now')"
+        )
+        rows = conn.execute(
+            f"SELECT * FROM alerts WHERE {filters_str} ORDER BY created_at DESC",
+            params,
+        ).fetchall()
+    return {"alerts": [dict(r) for r in rows]}
+
+
+@app.post("/alerts/{alert_id}/dismiss")
+def dismiss_alert(alert_id: int):
+    with db() as conn:
+        conn.execute("UPDATE alerts SET status='dismissed' WHERE id=?", (alert_id,))
+    return {"status": "dismissed"}
+
+
+@app.post("/alerts/{alert_id}/snooze")
+def snooze_alert(alert_id: int, req: SnoozeRequest):
+    with db() as conn:
+        conn.execute(
+            "UPDATE alerts SET status='snoozed', snoozed_until=datetime('now', ?) WHERE id=?",
+            (f"+{req.days} days", alert_id),
+        )
+    return {"status": "snoozed", "days": req.days}
+
+
+@app.get("/dashboard/summary")
+def dashboard_summary():
+    with db() as conn:
+        this_month = conn.execute(
+            """SELECT ROUND(SUM(amount),2) as total FROM transactions
+               WHERE transaction_type='debit'
+               AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"""
+        ).fetchone()["total"] or 0
+
+        last_month = conn.execute(
+            """SELECT ROUND(SUM(amount),2) as total FROM transactions
+               WHERE transaction_type='debit'
+               AND strftime('%Y-%m', date) = strftime('%Y-%m', date('now','-1 month'))"""
+        ).fetchone()["total"] or 0
+
+        top_category = conn.execute(
+            """SELECT category FROM transactions
+               WHERE transaction_type='debit'
+               AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
+               GROUP BY category ORDER BY SUM(amount) DESC LIMIT 1"""
+        ).fetchone()
+
+        tx_count = conn.execute(
+            """SELECT COUNT(*) as c FROM transactions
+               WHERE strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"""
+        ).fetchone()["c"]
+
+        upcoming = conn.execute(
+            """SELECT description, amount FROM transactions
+               WHERE category IN ('EMIs','Subscriptions','Insurance')
+               AND transaction_type='debit'
+               GROUP BY description ORDER BY MAX(date) DESC LIMIT 5"""
+        ).fetchall()
+
+        unread_alerts = conn.execute(
+            "SELECT COUNT(*) as c FROM alerts WHERE status='unread'"
+        ).fetchone()["c"]
+
+    delta = this_month - last_month
+    delta_pct = round((delta / last_month * 100), 1) if last_month else 0
+
+    return {
+        "this_month_spend": this_month,
+        "last_month_spend": last_month,
+        "delta": delta,
+        "delta_pct": delta_pct,
+        "top_category": top_category["category"] if top_category else None,
+        "transaction_count": tx_count,
+        "upcoming_charges": [dict(r) for r in upcoming],
+        "unread_alerts": unread_alerts,
+    }
+
+
+@app.get("/ingestion/status")
+def ingestion_status():
+    with db() as conn:
+        state = conn.execute("SELECT * FROM system_state").fetchall()
+        recent = conn.execute(
+            "SELECT * FROM ingested_files ORDER BY ingested_at DESC LIMIT 10"
+        ).fetchall()
+        failures = conn.execute(
+            "SELECT * FROM ingested_files WHERE status='failed' ORDER BY ingested_at DESC LIMIT 5"
+        ).fetchall()
+    return {
+        "mailbox_state": [dict(r) for r in state],
+        "recent_files": [dict(r) for r in recent],
+        "failures": [dict(r) for r in failures],
+    }
+
+
+@app.post("/ingest/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Manual file upload endpoint."""
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    dest = STATEMENTS_DIR / file.filename
+    dest.write_bytes(await file.read())
+    # Watcher will pick it up automatically; also trigger directly
+    from backend.ingestion.pipeline import ingest_file
+    result = ingest_file(dest)
+    return result
+
+
+@app.post("/ingest/fetch-email")
+def trigger_email_fetch():
+    """Manually trigger email fetch."""
+    from backend.ingestion.email_fetcher import run_fetch
+    from backend.ingestion.pipeline import ingest_file
+    files = run_fetch()
+    results = [ingest_file(f) for f in files]
+    return {"fetched": len(files), "results": results}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket — real-time alert push
+# ---------------------------------------------------------------------------
+
+@app.websocket("/ws/alerts")
+async def ws_alerts(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keep connection alive
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp webhook (REA Communication Agent posts here)
+# ---------------------------------------------------------------------------
+
+class WhatsAppQuery(BaseModel):
+    query: str
+    sender: Optional[str] = None
+
+@app.post("/whatsapp/query")
+def whatsapp_query(req: WhatsAppQuery):
+    from backend.rag.pipeline import query
+    result = query(req.query)
+    return {"answer": result.answer, "low_confidence": result.low_confidence}

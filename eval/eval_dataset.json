@@ -1,0 +1,58 @@
+[
+  {
+    "id": "spend_jan",
+    "type": "spending_query",
+    "question": "How much did I spend in January?",
+    "expected_contains": ["January", "₹"],
+    "tests": "SQL aggregation accuracy"
+  },
+  {
+    "id": "dining_category",
+    "type": "category_query",
+    "question": "Show all dining expenses",
+    "expected_contains": ["Dining"],
+    "tests": "Categorization + retrieval"
+  },
+  {
+    "id": "trend_compare",
+    "type": "trend_query",
+    "question": "Am I spending more than last month?",
+    "expected_contains": ["month"],
+    "tests": "Multi-period comparison"
+  },
+  {
+    "id": "emi_query",
+    "type": "document_query",
+    "question": "List all my EMI payments",
+    "expected_contains": ["EMI"],
+    "tests": "RAG retrieval from raw text"
+  },
+  {
+    "id": "date_edge",
+    "type": "edge_case",
+    "question": "What did I spend on 14th February?",
+    "expected_contains": ["February", "14"],
+    "tests": "Date parsing accuracy"
+  },
+  {
+    "id": "top_spend",
+    "type": "spending_query",
+    "question": "What are my highest expenses this quarter?",
+    "expected_contains": ["₹"],
+    "tests": "SQL aggregation + ordering"
+  },
+  {
+    "id": "insurance_query",
+    "type": "category_query",
+    "question": "What are my insurance payments this year?",
+    "expected_contains": ["Insurance"],
+    "tests": "Category filtering"
+  },
+  {
+    "id": "subscriptions",
+    "type": "category_query",
+    "question": "Show all my subscription charges",
+    "expected_contains": ["Subscriptions"],
+    "tests": "Subscription categorization"
+  }
+]

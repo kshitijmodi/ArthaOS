@@ -1,0 +1,39 @@
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+websockets==12.0
+
+# PDF parsing
+pymupdf==1.24.3
+pdfplumber==0.11.0
+
+# Data
+pandas==2.2.2
+numpy==1.26.4
+
+# Embeddings + vector store
+sentence-transformers==3.0.1
+faiss-cpu==1.8.0
+
+# LLM clients
+groq==0.9.0
+google-generativeai==0.7.2
+
+# Email
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.130.0
+
+# Scheduling + file watching
+apscheduler==3.10.4
+watchdog==4.0.1
+
+# Database
+# sqlite3 is built-in
+
+# Utilities
+python-dotenv==1.0.1
+python-multipart==0.0.9
+pydantic==2.7.1
+httpx==0.27.0
