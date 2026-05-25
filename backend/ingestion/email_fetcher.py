@@ -29,9 +29,11 @@ logger = logging.getLogger(__name__)
 
 STATEMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Filename patterns that suggest a bank/card statement PDF
+# Filename/subject patterns that suggest a bank, card, or investment statement PDF
 STATEMENT_PATTERNS = re.compile(
-    r"(statement|stmt|account|txn|transaction|credit.card|bill|invoice|passbook)",
+    r"(statement|stmt|account|txn|transaction|credit.card|bill|invoice|passbook"
+    r"|portfolio|brokerage|confirmation|trade|holdings|activity|401k|401\(k\)"
+    r"|robinhood|schwab|fidelity|thinkorswim|netbenefits)",
     re.IGNORECASE,
 )
 
