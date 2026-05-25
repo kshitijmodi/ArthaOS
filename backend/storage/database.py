@@ -103,6 +103,40 @@ def init_db():
             created_at  TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS investment_transactions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            date            TEXT NOT NULL,
+            ticker          TEXT,
+            name            TEXT,
+            transaction_type TEXT NOT NULL,
+            quantity        REAL,
+            price_per_unit  REAL,
+            total_value     REAL NOT NULL,
+            currency        TEXT NOT NULL DEFAULT 'USD',
+            account         TEXT NOT NULL,
+            broker          TEXT NOT NULL,
+            source_file     TEXT NOT NULL,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(date, ticker, transaction_type, total_value, source_file)
+        );
+
+        CREATE TABLE IF NOT EXISTS investment_holdings (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            as_of_date      TEXT NOT NULL,
+            ticker          TEXT,
+            name            TEXT NOT NULL,
+            quantity        REAL,
+            price           REAL,
+            total_value     REAL NOT NULL,
+            gain_loss       REAL,
+            gain_loss_pct   REAL,
+            account         TEXT NOT NULL,
+            broker          TEXT NOT NULL,
+            source_file     TEXT NOT NULL,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(as_of_date, ticker, account, source_file)
+        );
+
         -- Seed system_state rows
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('gmail', NULL);
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('yahoo', NULL);
@@ -115,6 +149,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_alerts_status         ON alerts(status);
         CREATE INDEX IF NOT EXISTS idx_alerts_severity       ON alerts(severity);
         CREATE INDEX IF NOT EXISTS idx_email_tracking_mailbox ON email_tracking(mailbox);
+        CREATE INDEX IF NOT EXISTS idx_inv_tx_date   ON investment_transactions(date);
+        CREATE INDEX IF NOT EXISTS idx_inv_tx_broker ON investment_transactions(broker);
+        CREATE INDEX IF NOT EXISTS idx_inv_hld_date  ON investment_holdings(as_of_date);
+        CREATE INDEX IF NOT EXISTS idx_inv_hld_broker ON investment_holdings(broker);
         """)
     _seed_categories()
     print(f"[DB] Initialised at {DB_PATH}")

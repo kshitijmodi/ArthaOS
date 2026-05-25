@@ -56,8 +56,18 @@ def _store_transactions(transactions, source_file: str, category_fn) -> int:
 def ingest_file(path: Path, password: str = "") -> dict:
     """
     Parse, validate, categorize and store a single PDF.
+    Routes investment PDFs to the investment pipeline automatically.
     Returns a summary dict describing what happened.
     """
+    # Check if this is an investment statement — route separately
+    try:
+        from backend.investments.parser import is_investment_pdf
+        if is_investment_pdf(path):
+            from backend.investments.pipeline import ingest_investment_file
+            return ingest_investment_file(path)
+    except Exception as exc:
+        logger.warning("[Pipeline] Investment detection failed for %s: %s", path.name, exc)
+
     # Lazy imports to avoid circular deps at module load time
     from backend.processing.categorizer import categorize
     from backend.embeddings.embedder import embed_and_store

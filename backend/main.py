@@ -478,6 +478,135 @@ def month_comparison():
     return {"data": [dict(r) for r in rows]}
 
 
+# ---------------------------------------------------------------------------
+# Investment endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/investments/summary")
+def investments_summary():
+    """Portfolio summary: total value by broker + overall."""
+    with db() as conn:
+        # Latest holdings snapshot per broker (most recent as_of_date per account)
+        portfolio = conn.execute(
+            """SELECT broker, account,
+                      SUM(total_value) as total_value,
+                      MAX(as_of_date) as as_of_date,
+                      COUNT(*) as positions
+               FROM investment_holdings h
+               WHERE as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               GROUP BY broker, account"""
+        ).fetchall()
+
+        total_invested = conn.execute(
+            """SELECT COALESCE(SUM(total_value), 0) as total
+               FROM investment_transactions
+               WHERE transaction_type IN ('buy', 'contribution', 'deposit')"""
+        ).fetchone()["total"]
+
+        total_dividends = conn.execute(
+            """SELECT COALESCE(SUM(total_value), 0) as total
+               FROM investment_transactions
+               WHERE transaction_type = 'dividend'"""
+        ).fetchone()["total"]
+
+        recent_txs = conn.execute(
+            """SELECT * FROM investment_transactions
+               ORDER BY date DESC LIMIT 10"""
+        ).fetchall()
+
+    portfolio_value = sum(r["total_value"] for r in portfolio)
+
+    return {
+        "portfolio_value": round(portfolio_value, 2),
+        "total_invested": round(total_invested, 2),
+        "total_dividends": round(total_dividends, 2),
+        "accounts": [dict(r) for r in portfolio],
+        "recent_transactions": [dict(r) for r in recent_txs],
+    }
+
+
+@app.get("/investments/holdings")
+def investments_holdings(broker: Optional[str] = None, account: Optional[str] = None):
+    """Latest holdings per account."""
+    filters = []
+    params: list = []
+    if broker:
+        filters.append("h.broker = ?")
+        params.append(broker)
+    if account:
+        filters.append("h.account = ?")
+        params.append(account)
+
+    where = ("AND " + " AND ".join(filters)) if filters else ""
+
+    with db() as conn:
+        rows = conn.execute(
+            f"""SELECT h.*
+               FROM investment_holdings h
+               WHERE h.as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               {where}
+               ORDER BY h.total_value DESC""",
+            params,
+        ).fetchall()
+
+    return {"holdings": [dict(r) for r in rows]}
+
+
+@app.get("/investments/transactions")
+def investments_transactions(
+    page: int = 1,
+    page_size: int = 50,
+    broker: Optional[str] = None,
+    transaction_type: Optional[str] = None,
+):
+    filters = ["1=1"]
+    params: list = []
+    if broker:
+        filters.append("broker = ?")
+        params.append(broker)
+    if transaction_type:
+        filters.append("transaction_type = ?")
+        params.append(transaction_type)
+
+    where = " AND ".join(filters)
+    offset = (page - 1) * page_size
+
+    with db() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM investment_transactions WHERE {where}", params
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"""SELECT * FROM investment_transactions WHERE {where}
+                ORDER BY date DESC LIMIT ? OFFSET ?""",
+            params + [page_size, offset],
+        ).fetchall()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "transactions": [dict(r) for r in rows],
+    }
+
+
+@app.post("/investments/upload")
+async def upload_investment_file(file: UploadFile = File(...)):
+    """Manual upload for investment statement PDFs."""
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    dest = STATEMENTS_DIR / file.filename
+    dest.write_bytes(await file.read())
+    from backend.investments.pipeline import ingest_investment_file
+    result = ingest_investment_file(dest)
+    return result
+
+
 @app.websocket("/ws/alerts")
 async def ws_alerts(websocket: WebSocket):
     await manager.connect(websocket)
