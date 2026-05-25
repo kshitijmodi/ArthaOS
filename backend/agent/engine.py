@@ -454,3 +454,192 @@ def run_agent() -> list[int]:
     saved_ids = _save_alerts(all_alerts)
     logger.info("[Agent] %d new alerts saved (from %d detected)", len(saved_ids), len(all_alerts))
     return saved_ids
+
+
+# ---------------------------------------------------------------------------
+# Finance slash-command dispatcher
+# ---------------------------------------------------------------------------
+
+_FINANCE_COMMANDS = {
+    "summary":   "summary",
+    "overview":  "summary",
+    "alerts":    "alerts",
+    "check":     "alerts",
+    "overspend": "overspend",
+    "anomaly":   "anomaly",
+    "anomalies": "anomaly",
+    "duplicate": "duplicate",
+    "duplicates":"duplicate",
+    "budget":    "budget",
+    "recurring": "recurring",
+    "due":       "due",
+    "card":      "due",
+    "run":       "run_all",
+    "scan":      "run_all",
+    "help":      "help",
+}
+
+_HELP_TEXT = (
+    "Available /finance sub-commands:\n"
+    "  summary    — month-to-date spend overview\n"
+    "  alerts     — list recent unread alerts\n"
+    "  overspend  — check category overspend\n"
+    "  anomaly    — check for unusual transactions\n"
+    "  duplicate  — check for duplicate charges\n"
+    "  budget     — check budget projection\n"
+    "  recurring  — check recurring charge changes\n"
+    "  due        — check upcoming card due dates\n"
+    "  run        — run all detection modules now\n"
+    "  help       — show this message"
+)
+
+
+def handle_finance_command(query: str) -> dict:
+    """
+    Dispatch a /finance slash command.
+
+    Parses the first token of *query* as the sub-command and runs the
+    corresponding detection module(s).  Returns a dict with keys
+    ``answer``, ``low_confidence``, and ``sources`` so that the caller
+    (``/finance`` endpoint in main.py) can return a uniform response.
+    """
+    try:
+        return _dispatch_finance_command(query)
+    except Exception as exc:
+        logger.exception("[Finance] Error handling command %r", query)
+        return {
+            "answer": f"Error processing finance command: {exc}",
+            "low_confidence": True,
+            "sources": [],
+        }
+
+
+def _dispatch_finance_command(query: str) -> dict:
+    tokens = query.strip().lower().split()
+    sub = tokens[0] if tokens else "help"
+    action = _FINANCE_COMMANDS.get(sub, None)
+    logger.debug("[Finance] _dispatch: query=%r → sub=%r → action=%r", query, sub, action)
+
+    if action is None:
+        logger.debug("[Finance] Unknown sub-command %r; returning help text", sub)
+        return {
+            "answer": (
+                f"Unknown finance command: '{sub}'.\n\n{_HELP_TEXT}"
+            ),
+            "low_confidence": True,
+            "sources": [],
+        }
+
+    if action == "help":
+        return {"answer": _HELP_TEXT, "low_confidence": False, "sources": []}
+
+    if action == "run_all":
+        months = _months_of_data()
+        if months < AGENT_MIN_MONTHS:
+            return {
+                "answer": (
+                    f"Not enough data to run detection — "
+                    f"{months} month(s) of data available, "
+                    f"{AGENT_MIN_MONTHS} required."
+                ),
+                "low_confidence": True,
+                "sources": [],
+            }
+        alert_ids = run_agent()
+        if not alert_ids:
+            return {
+                "answer": "Agent run complete — no new alerts detected.",
+                "low_confidence": False,
+                "sources": [],
+            }
+        return {
+            "answer": f"Agent run complete — {len(alert_ids)} new alert(s) saved.",
+            "low_confidence": False,
+            "sources": [],
+        }
+
+    if action == "alerts":
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT alert_type, severity, description, created_at "
+                "FROM alerts WHERE status='unread' ORDER BY created_at DESC LIMIT 10"
+            ).fetchall()
+        if not rows:
+            return {"answer": "No unread alerts.", "low_confidence": False, "sources": []}
+        lines = [
+            f"[{r['severity'].upper()}] {r['description']}"
+            for r in rows
+        ]
+        return {
+            "answer": f"{len(rows)} unread alert(s):\n\n" + "\n".join(lines),
+            "low_confidence": False,
+            "sources": [],
+        }
+
+    # Module-specific runs
+    detector_map = {
+        "overspend": detect_overspend,
+        "anomaly":   detect_anomalies,
+        "duplicate": detect_duplicates,
+        "budget":    detect_budget_overrun,
+        "recurring": detect_recurring_issues,
+        "due":       detect_card_due_dates,
+    }
+
+    if action == "summary":
+        with db() as conn:
+            this_month = conn.execute(
+                """SELECT COALESCE(ROUND(SUM(amount),2),0) as total
+                   FROM transactions
+                   WHERE transaction_type='debit'
+                     AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"""
+            ).fetchone()["total"]
+            last_month = conn.execute(
+                """SELECT COALESCE(ROUND(SUM(amount),2),0) as total
+                   FROM transactions
+                   WHERE transaction_type='debit'
+                     AND strftime('%Y-%m', date) = strftime('%Y-%m', date('now','-1 month'))"""
+            ).fetchone()["total"]
+            top_cat = conn.execute(
+                """SELECT category, ROUND(SUM(amount),2) as total
+                   FROM transactions
+                   WHERE transaction_type='debit'
+                     AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
+                   GROUP BY category ORDER BY total DESC LIMIT 1"""
+            ).fetchone()
+        delta = this_month - last_month
+        delta_sign = "+" if delta >= 0 else ""
+        top_cat_str = (
+            f"\nTop category: {top_cat['category']} (₹{top_cat['total']:,.0f})"
+            if top_cat else ""
+        )
+        return {
+            "answer": (
+                f"This month's spend: ₹{this_month:,.0f}\n"
+                f"Last month's spend: ₹{last_month:,.0f}\n"
+                f"Change: {delta_sign}₹{delta:,.0f}"
+                f"{top_cat_str}"
+            ),
+            "low_confidence": False,
+            "sources": [],
+        }
+
+    detector_fn = detector_map.get(action)
+    if detector_fn:
+        logger.debug("[Finance] Running detector: %s", action)
+        alerts = detector_fn()
+        logger.debug("[Finance] Detector %s returned %d alert(s)", action, len(alerts))
+        if not alerts:
+            return {
+                "answer": f"No {action} issues detected.",
+                "low_confidence": False,
+                "sources": [],
+            }
+        lines = [f"[{a.severity.upper()}] {a.description}" for a in alerts]
+        return {
+            "answer": f"{len(alerts)} {action} alert(s):\n\n" + "\n".join(lines),
+            "low_confidence": False,
+            "sources": [],
+        }
+
+    return {"answer": _HELP_TEXT, "low_confidence": False, "sources": []}

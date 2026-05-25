@@ -110,6 +110,42 @@ def query_endpoint(req: QueryRequest):
     }
 
 
+@app.post("/finance")
+def finance_command_endpoint(req: QueryRequest):
+    query = req.query.strip()
+    logger.debug("[Finance] Raw request body: query=%r (stripped_len=%d)", req.query, len(query))
+    if not query:
+        raise HTTPException(status_code=400, detail="Finance command query must not be empty")
+
+    logger.info("[Finance] Received command: %r", query)
+
+    try:
+        from backend.agent.engine import handle_finance_command
+        result = handle_finance_command(query)
+    except ImportError as exc:
+        logger.error("[Finance] Failed to import engine: %s", exc)
+        raise HTTPException(status_code=500, detail="Finance command handler unavailable")
+    except Exception as exc:
+        logger.exception("[Finance] Unexpected error for command %r: %s", query, exc)
+        raise HTTPException(status_code=500, detail="Internal error processing finance command")
+
+    if not isinstance(result, dict):
+        logger.error("[Finance] Engine returned unexpected type: %r", type(result))
+        raise HTTPException(status_code=500, detail="Finance command returned an invalid response")
+
+    answer = result.get("answer") or ""
+    low_confidence = bool(result.get("low_confidence", False))
+    sources = result.get("sources") if isinstance(result.get("sources"), list) else []
+
+    logger.info("[Finance] Command %r completed (low_confidence=%s)", query, low_confidence)
+
+    return {
+        "answer": answer,
+        "low_confidence": low_confidence,
+        "sources": sources,
+    }
+
+
 @app.get("/transactions")
 def get_transactions(
     page: int = 1,

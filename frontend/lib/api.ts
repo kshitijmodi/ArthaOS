@@ -83,4 +83,18 @@ export const getSummary = () => apiFetch<DashboardSummary>("/dashboard/summary")
 export const sendQuery = (query: string) =>
   apiFetch<QueryResponse>("/query", { method: "POST", body: JSON.stringify({ query }) });
 
+export async function sendFinanceCommand(args: string): Promise<QueryResponse> {
+  console.debug("[api] sendFinanceCommand → POST /finance, args:", JSON.stringify(args));
+  const res = await apiFetch<QueryResponse>("/finance", {
+    method: "POST",
+    body: JSON.stringify({ query: args }),
+  });
+  console.debug("[api] sendFinanceCommand ← response:", {
+    answer_length: res.answer?.length,
+    low_confidence: res.low_confidence,
+    sources_count: res.sources?.length ?? 0,
+  });
+  return res;
+}
+
 export const getIngestionStatus = () => apiFetch("/ingestion/status");

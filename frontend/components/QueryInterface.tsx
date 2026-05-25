@@ -1,13 +1,45 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { Send, AlertTriangle } from "lucide-react";
-import { sendQuery, QueryResponse } from "@/lib/api";
+import { sendQuery, sendFinanceCommand, QueryResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   low_confidence?: boolean;
+}
+
+const SLASH_COMMANDS = ["/finance"] as const;
+type SlashCommand = (typeof SLASH_COMMANDS)[number];
+
+function parseSlashCommand(input: string): { command: SlashCommand; args: string } | null {
+  for (const cmd of SLASH_COMMANDS) {
+    if (input === cmd || input.startsWith(cmd + " ")) {
+      return { command: cmd, args: input.slice(cmd.length).trim() };
+    }
+  }
+  return null;
+}
+
+const MAX_INPUT_LENGTH = 500;
+// Allowed pattern for /finance args: alphanumeric, spaces, and common punctuation
+const FINANCE_ARGS_PATTERN = /^[a-zA-Z0-9\s.,!?'"\-_@#%&()/\\:;]+$/;
+
+function sanitizeInput(raw: string): string {
+  // Strip control characters (except newline/tab), collapse runs of whitespace, trim
+  return raw
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_INPUT_LENGTH);
+}
+
+function validateFinanceArgs(args: string): string | null {
+  if (args.length === 0) return null; // empty args are allowed
+  if (args.length > MAX_INPUT_LENGTH) return `Query too long (max ${MAX_INPUT_LENGTH} characters).`;
+  if (!FINANCE_ARGS_PATTERN.test(args)) return "Query contains unsupported characters.";
+  return null;
 }
 
 const SUGGESTIONS = [
@@ -28,19 +60,44 @@ export default function QueryInterface() {
   }, [messages]);
 
   const submit = async (q: string) => {
-    if (!q.trim() || loading) return;
-    const userMsg: Message = { role: "user", content: q };
+    const sanitized = sanitizeInput(q);
+    if (!sanitized || loading) return;
+    const userMsg: Message = { role: "user", content: sanitized };
     setMessages(prev => [...prev, userMsg]);
     setInput("");
     setLoading(true);
     try {
-      const res = await sendQuery(q);
+      const slashCmd = parseSlashCommand(sanitized);
+      console.debug("[QueryInterface] parsed slash command:", slashCmd ?? "(none — plain query)");
+
+      if (slashCmd?.command === "/finance") {
+        const validationError = validateFinanceArgs(slashCmd.args);
+        if (validationError) {
+          console.debug("[QueryInterface] /finance validation failed:", validationError);
+          setMessages(prev => [...prev, { role: "assistant", content: validationError }]);
+          setLoading(false);
+          return;
+        }
+        console.debug("[QueryInterface] dispatching /finance with args:", JSON.stringify(slashCmd.args));
+      }
+
+      const res = slashCmd?.command === "/finance"
+        ? await sendFinanceCommand(slashCmd.args)
+        : await sendQuery(sanitized);
+
+      console.debug("[QueryInterface] response received:", {
+        answer_length: res.answer?.length,
+        low_confidence: res.low_confidence,
+        sources_count: res.sources?.length ?? 0,
+      });
+
       setMessages(prev => [...prev, {
         role: "assistant",
         content: res.answer,
         low_confidence: res.low_confidence,
       }]);
-    } catch {
+    } catch (err) {
+      console.error("[QueryInterface] request failed:", err);
       setMessages(prev => [...prev, {
         role: "assistant",
         content: "Sorry, I couldn't process that. Please check if the backend is running.",
@@ -108,7 +165,7 @@ export default function QueryInterface() {
       >
         <input
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => setInput(e.target.value.slice(0, MAX_INPUT_LENGTH))}
           placeholder="Ask about your finances…"
           className="flex-1 bg-white/10 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/50"
         />
