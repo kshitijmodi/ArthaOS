@@ -7,9 +7,10 @@ import TransactionTable from "@/components/TransactionTable";
 import IngestionStatus from "@/components/IngestionStatus";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import InsightsPanel from "@/components/InsightsPanel";
+import CategoryManager from "@/components/CategoryManager";
 import { cn } from "@/lib/utils";
 
-const TABS = ["Overview", "Analytics", "Transactions", "Insights"] as const;
+const TABS = ["Overview", "Analytics", "Transactions", "Insights", "Settings"] as const;
 type Tab = typeof TABS[number];
 
 export default function Dashboard() {
@@ -65,6 +66,8 @@ export default function Dashboard() {
         {tab === "Transactions" && <TransactionTable />}
 
         {tab === "Insights" && <InsightsPanel />}
+
+        {tab === "Settings" && <CategoryManager />}
       </main>
     </div>
   );

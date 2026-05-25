@@ -382,6 +382,62 @@ def recategorize_misc():
     return {"updated": updated}
 
 
+# ---------------------------------------------------------------------------
+# Category management endpoints
+# ---------------------------------------------------------------------------
+
+class CategoryCreateRequest(BaseModel):
+    name: str
+    keywords: str = ""
+
+class CategoryUpdateRequest2(BaseModel):
+    name: Optional[str] = None
+    keywords: Optional[str] = None
+
+@app.get("/categories")
+def list_categories():
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM categories ORDER BY is_system DESC, name ASC").fetchall()
+    return {"categories": [dict(r) for r in rows]}
+
+@app.post("/categories")
+def create_category(req: CategoryCreateRequest):
+    with db() as conn:
+        try:
+            cur = conn.execute(
+                "INSERT INTO categories (name, keywords, is_system) VALUES (?, ?, 0)",
+                (req.name.strip(), req.keywords.strip()),
+            )
+            return {"id": cur.lastrowid, "name": req.name}
+        except Exception:
+            raise HTTPException(status_code=400, detail="Category name already exists")
+
+@app.patch("/categories/{cat_id}")
+def update_category_entry(cat_id: int, req: CategoryUpdateRequest2):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Category not found")
+        new_name = req.name.strip() if req.name is not None else row["name"]
+        new_keywords = req.keywords.strip() if req.keywords is not None else row["keywords"]
+        conn.execute(
+            "UPDATE categories SET name = ?, keywords = ? WHERE id = ?",
+            (new_name, new_keywords, cat_id),
+        )
+    return {"status": "updated"}
+
+@app.delete("/categories/{cat_id}")
+def delete_category(cat_id: int):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Category not found")
+        if row["is_system"]:
+            raise HTTPException(status_code=400, detail="Cannot delete system categories")
+        conn.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    return {"status": "deleted"}
+
+
 @app.get("/analytics/monthly-trend")
 def monthly_trend():
     with db() as conn:

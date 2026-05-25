@@ -95,11 +95,20 @@ def init_db():
             corrected_at    TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS categories (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE,
+            keywords    TEXT NOT NULL DEFAULT '',
+            is_system   INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         -- Seed system_state rows
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('gmail', NULL);
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('yahoo', NULL);
 
         -- Indexes
+        CREATE INDEX IF NOT EXISTS idx_categories_name       ON categories(name);
         CREATE INDEX IF NOT EXISTS idx_transactions_date     ON transactions(date);
         CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
         CREATE INDEX IF NOT EXISTS idx_transactions_source   ON transactions(source_file);
@@ -107,7 +116,35 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_alerts_severity       ON alerts(severity);
         CREATE INDEX IF NOT EXISTS idx_email_tracking_mailbox ON email_tracking(mailbox);
         """)
+    _seed_categories()
     print(f"[DB] Initialised at {DB_PATH}")
+
+
+DEFAULT_CATEGORIES = [
+    ("Groceries",     "big bazaar,dmart,reliance fresh,zepto,blinkit,grofer,swiggy instamart,bigbasket,more supermart,spencer,lulu", 1),
+    ("Dining",        "swiggy,zomato,domino,pizza hut,mcdonald,kfc,burger king,starbucks,subway,haldiram,restaurant,eatery,bistro", 1),
+    ("Travel",        "uber,ola,rapido,metro,irctc,makemytrip,redbus,yatra,cleartrip,indigo,air india,spicejet,petrol,fuel", 1),
+    ("Utilities",     "electricity,bescom,msedcl,tata power,water board,gas bill,pseg,att,honest networks,airtel broadband", 1),
+    ("Subscriptions", "jio,airtel,vodafone,netflix,amazon prime,hotstar,spotify,youtube premium,zee5,sony liv,voot,apple", 1),
+    ("Insurance",     "lic,hdfc life,icici pru,bajaj allianz,star health,insurance,amfam,progressive,assurant", 1),
+    ("EMIs",          "emi,loan repay,bajaj fin,home loan,car loan,personal loan,emi debit", 1),
+    ("Rent",          "rent,house rent,rental,pg rent,accommodation,lease", 1),
+    ("Shopping",      "amazon,flipkart,myntra,ajio,nykaa,meesho,snapdeal,croma,vijay sales,reliance digital,walmart,target,costco", 1),
+    ("Healthcare",    "apollo,fortis,medplus,1mg,pharmeasy,netmeds,hospital,clinic,pharmacy,diagnostic,cvs,walgreens", 1),
+    ("Education",     "udemy,coursera,byju,unacademy,school fee,college fee,tuition,exam fee", 1),
+    ("Investments",   "robinhood,schwab,fidelity,vanguard,axis direct,zerodha,groww,mutual fund,stock,etf,brokerage", 1),
+    ("Income",        "salary,neft cr,rtgs cr,credit salary,payroll,stipend,paylocity,direct deposit", 1),
+    ("Miscellaneous", "", 1),
+]
+
+
+def _seed_categories():
+    with db() as conn:
+        for name, keywords, is_system in DEFAULT_CATEGORIES:
+            conn.execute(
+                "INSERT OR IGNORE INTO categories (name, keywords, is_system) VALUES (?, ?, ?)",
+                (name, keywords, is_system),
+            )
 
 
 if __name__ == "__main__":

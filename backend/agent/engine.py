@@ -9,6 +9,7 @@ Detection modules:
   3. Recurring Charge Monitor
   4. Duplicate Detector
   5. Monthly Budget Monitor
+  6. Card Payment Due Date Monitor
 """
 import json
 import logging
@@ -22,6 +23,7 @@ from backend.config import (
     DUPLICATE_WINDOW_DAYS,
     BUDGET_OVERSHOOT_THRESHOLD,
     AGENT_MIN_MONTHS,
+    CARD_DUE_ALERT_DAYS,
 )
 from backend.storage.database import db
 
@@ -353,6 +355,75 @@ def detect_budget_overrun() -> list[Alert]:
 
 
 # ---------------------------------------------------------------------------
+# 6. Card Payment Due Date Monitor
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate a card payment due date in raw statement text
+_DUE_DATE_PATTERNS = [
+    re.compile(r"payment\s+due\s+(?:date|by)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})", re.I),
+    re.compile(r"due\s+date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})", re.I),
+    re.compile(r"minimum\s+due.*?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})", re.I),
+    re.compile(r"pay\s+by[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})", re.I),
+]
+
+_DATE_FORMATS = ["%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%m-%d-%Y",
+                 "%d/%m/%y", "%m/%d/%y", "%d-%m-%y", "%m-%d-%y"]
+
+
+def _parse_due_date(raw: str) -> datetime | None:
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw.strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def detect_card_due_dates() -> list[Alert]:
+    """
+    Scans raw_text of ingested documents for credit card payment due dates.
+    Alerts if a due date falls within CARD_DUE_ALERT_DAYS days from today.
+    """
+    alerts = []
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    window_end = today + timedelta(days=CARD_DUE_ALERT_DAYS)
+
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT source_file, raw_text FROM transactions
+               WHERE raw_text IS NOT NULL AND raw_text != ''"""
+        ).fetchall()
+
+    seen_dates: set[str] = set()
+
+    for row in rows:
+        raw_text = row["raw_text"] or ""
+        source = row["source_file"]
+        for pattern in _DUE_DATE_PATTERNS:
+            for match in pattern.finditer(raw_text):
+                due = _parse_due_date(match.group(1))
+                if not due:
+                    continue
+                key = f"{source}:{due.date()}"
+                if key in seen_dates:
+                    continue
+                seen_dates.add(key)
+                if today <= due <= window_end:
+                    days_left = (due - today).days
+                    label = "today" if days_left == 0 else f"in {days_left} day{'s' if days_left > 1 else ''}"
+                    alerts.append(Alert(
+                        alert_type="card_due",
+                        severity="high",
+                        description=(
+                            f"Card payment due {label} ({due.strftime('%d %b %Y')}) "
+                            f"from statement: {source}."
+                        ),
+                    ))
+
+    return alerts
+
+
+# ---------------------------------------------------------------------------
 # Main agent run
 # ---------------------------------------------------------------------------
 
@@ -377,6 +448,7 @@ def run_agent() -> list[int]:
     all_alerts += detect_recurring_issues()
     all_alerts += detect_duplicates()
     all_alerts += detect_budget_overrun()
+    all_alerts += detect_card_due_dates()
 
     saved_ids = _save_alerts(all_alerts)
     logger.info("[Agent] %d new alerts saved (from %d detected)", len(saved_ids), len(all_alerts))

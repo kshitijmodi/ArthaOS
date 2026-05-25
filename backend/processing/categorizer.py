@@ -32,11 +32,27 @@ RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"salary|neft\s*cr|rtgs\s*cr|credit\s*salary|payroll|stipend", re.I), "Income"),
 ]
 
-VALID_CATEGORIES = {
-    "Groceries", "Dining", "Travel", "Utilities", "Subscriptions",
-    "Insurance", "EMIs", "Rent", "Shopping", "Healthcare", "Education",
-    "Income", "Miscellaneous",
-}
+def _load_valid_categories() -> set[str]:
+    try:
+        from backend.storage.database import db
+        with db() as conn:
+            rows = conn.execute("SELECT name FROM categories").fetchall()
+        if rows:
+            return {r["name"] for r in rows}
+    except Exception:
+        pass
+    return {
+        "Groceries", "Dining", "Travel", "Utilities", "Subscriptions",
+        "Insurance", "EMIs", "Rent", "Shopping", "Healthcare", "Education",
+        "Investments", "Income", "Miscellaneous",
+    }
+
+
+def get_valid_categories() -> set[str]:
+    return _load_valid_categories()
+
+
+VALID_CATEGORIES = _load_valid_categories()
 
 # ---------------------------------------------------------------------------
 # Learned rules cache (rebuilt from corrections on demand)
@@ -93,11 +109,30 @@ def _learned_match(description: str) -> str | None:
     return None
 
 
+def _db_keyword_match(description: str) -> str | None:
+    """Match against user-editable keywords stored in the categories table."""
+    try:
+        from backend.storage.database import db
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT name, keywords FROM categories WHERE keywords != ''"
+            ).fetchall()
+        desc_lower = description.lower()
+        for row in rows:
+            for kw in row["keywords"].split(","):
+                kw = kw.strip()
+                if kw and kw in desc_lower:
+                    return row["name"]
+    except Exception:
+        pass
+    return None
+
+
 def _rule_match(description: str) -> str | None:
     for pattern, category in RULES:
         if pattern.search(description):
             return category
-    return None
+    return _db_keyword_match(description)
 
 
 def _get_user_correction(description: str) -> str | None:
@@ -115,15 +150,16 @@ def _get_user_correction(description: str) -> str | None:
 def _llm_categorize(description: str) -> str:
     try:
         from backend.rag.llm import complete
-        categories_str = ", ".join(sorted(VALID_CATEGORIES))
+        valid = get_valid_categories()
+        categories_str = ", ".join(sorted(valid))
         prompt = (
-            f"Categorize this Indian bank transaction into exactly one of these categories: "
+            f"Categorize this bank transaction into exactly one of these categories: "
             f"{categories_str}.\n\n"
             f"Transaction: {description}\n\n"
             f"Reply with only the category name, nothing else."
         )
         result = complete(prompt, max_tokens=20).strip()
-        if result in VALID_CATEGORIES:
+        if result in valid:
             return result
     except Exception as exc:
         logger.debug("[Categorizer] LLM fallback failed: %s", exc)
@@ -156,7 +192,7 @@ def categorize(description: str) -> str:
 
 def apply_correction(transaction_id: int, new_category: str) -> bool:
     """Persist a single user category correction and invalidate learned rules."""
-    if new_category not in VALID_CATEGORIES:
+    if new_category not in get_valid_categories():
         return False
     from backend.storage.database import db
     with db() as conn:
