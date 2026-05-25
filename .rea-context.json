@@ -13,5 +13,30 @@
     "role": "user",
     "text": "Update readme.md file",
     "timestamp": "2026-04-20T20:37:32.335Z"
+  },
+  {
+    "role": "assistant",
+    "text": "Task completed: Update readme.md file",
+    "timestamp": "2026-04-20T20:38:54.874Z"
+  },
+  {
+    "role": "user",
+    "text": "Tell me about this project",
+    "timestamp": "2026-04-27T06:07:20.004Z"
+  },
+  {
+    "role": "assistant",
+    "text": "**ArthaOS** is a Privacy-First Personal Financial Intelligence Operating System.\n\n## What it is\n\nNot a chatbot or dashboard — a **reasoning + memory layer** over your personal financial data. It combines structured financial data, RAG (retrieval-augmented generation), and constrained LLM reasoning to produce explainable financial insights.\n\n## Core Problem\n\nFinancial data is fragmented across banks, credit cards, loans, EMIs, insurance, and subscriptions — in inconsistent formats (PDFs, emails, ",
+    "timestamp": "2026-04-27T06:07:20.024Z"
+  },
+  {
+    "role": "user",
+    "text": "https://huggingface.co/spaces/iamkshitij/prescription-delivery-app\n\nFix the blackened buttons for quantity refills fields in provider Portal",
+    "timestamp": "2026-04-27T14:17:31.415Z"
+  },
+  {
+    "role": "user",
+    "text": "[media attachment]",
+    "timestamp": "2026-05-06T17:10:59.725Z"
   }
 ]
