@@ -40,7 +40,7 @@ def _store_transactions(txs: list[InvestmentTransaction], source_file: str) -> i
                        (date, ticker, name, transaction_type, quantity, price_per_unit,
                         total_value, currency, account, broker, source_file)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (tx.date, tx.ticker, tx.name, tx.transaction_type, tx.quantity,
+                    (tx.date, tx.ticker or "", tx.name, tx.transaction_type, tx.quantity,
                      tx.price_per_unit, tx.total_value, tx.currency,
                      tx.account, tx.broker, source_file),
                 )

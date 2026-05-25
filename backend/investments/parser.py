@@ -150,41 +150,71 @@ def detect_broker(text: str) -> Optional[str]:
 # Robinhood parser
 # ---------------------------------------------------------------------------
 
-# Robinhood monthly statement transaction line:
-#   Date   Description                   Type        Quantity   Price     Amount
-#   01/15/2024  AAPL - APPLE INC        Buy         1.000000   $185.20   $185.20
+# Transaction line (within ACCOUNT ACTIVITY section):
+#   04/03/2026 NVDA - NVIDIA Corporation Buy 2.000000 $865.10 $1,730.20
 _RH_TX_RE = re.compile(
-    r"(\d{2}/\d{2}/\d{4})\s+"           # date
-    r"([A-Z0-9\.\-]+)\s*[-–]?\s*"        # ticker
-    r"([A-Za-z &,\.]+?)\s+"             # name
-    r"(Buy|Sell|Dividend|Transfer|Deposit|Withdrawal|Fee|ACH\s+\w+)\s+"  # type
-    r"([\d,\.]+)?\s*"                   # quantity (optional)
-    r"\$?([\d,\.]+)?\s*"                # price (optional)
-    r"\(?\$?([\d,\.]+)\)?",             # amount
+    r"(\d{2}/\d{2}/\d{4})\s+"
+    r"([A-Z]{1,5})\s*[-–]\s*"                                              # ticker
+    r"([A-Za-z0-9 &,\.\-]+?)\s+"                                           # name (allow digits for ETFs)
+    r"(Buy|Sell|Dividend|Transfer|Deposit|Withdrawal|Fee|ACH\s+\w+)\s+"
+    r"([\d,\.]+)?\s*"
+    r"\$?([\d,\.]+)?\s*"
+    r"\$?([\d,\.]+)",
     re.IGNORECASE,
 )
 
-# Holdings line: AAPL   Apple Inc   2.000000   $185.50   $371.00   $10.50   2.91%
-_RH_HOLD_RE = re.compile(
-    r"([A-Z]{1,5})\s+"                  # ticker
-    r"([A-Za-z &,\.]+?)\s+"             # name
-    r"([\d,\.]+)\s+"                    # quantity
-    r"\$?([\d,\.]+)\s+"                 # price
-    r"\$?([\d,\.]+)\s+"                 # total value
-    r"(\(?\$?[\d,\.]+\)?)?\s*"          # gain/loss (optional)
-    r"([\-\d\.]+%)?",                   # gain/loss % (optional)
+# Non-ticker deposits/withdrawals (no ticker - dash pattern):
+#   04/28/2026 ACH Deposit Deposit 0 $0.00 $2,000.00
+_RH_NOTX_RE = re.compile(
+    r"(\d{2}/\d{2}/\d{4})\s+"
+    r"(ACH\s+\w+|Wire\s+\w+|Deposit|Withdrawal|Fee)\s+"
+    r"(Deposit|Withdrawal|Fee|Transfer)\s+"
+    r"\d+\s+\$[\d,\.]+\s+"
+    r"\$?([\d,\.]+)",
     re.IGNORECASE,
 )
+
+# Holdings line: AAPL Apple Inc. 10.000000 $172.50 $1,725.00 $215.00 14.24%
+_RH_HOLD_RE = re.compile(
+    r"^([A-Z]{1,5})\s+"                 # ticker — strict: uppercase letters only, line start
+    r"([A-Za-z0-9 &,\.\-]+?)\s+"        # name
+    r"(\d[\d,]*\.\d+)\s+"               # quantity (must have decimal)
+    r"\$(\d[\d,]*\.\d+)\s+"             # price
+    r"\$(\d[\d,]*\.\d+)"                # total value
+    r"(?:\s+(-?\$?[\d,\.]+\(?\)?)?"     # gain/loss optional
+    r"(?:\s+([-\d\.]+)%)?)?",           # gain/loss % optional
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _split_sections(text: str) -> dict[str, str]:
+    """Split statement into named sections for targeted parsing."""
+    section_headers = re.compile(
+        r"^(HOLDINGS|ACCOUNT ACTIVITY|PORTFOLIO SUMMARY|ACCOUNT VALUE|DIVIDENDS?)\s*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    sections: dict[str, str] = {"_preamble": ""}
+    current = "_preamble"
+    last_end = 0
+    for m in section_headers.finditer(text):
+        sections[current] = text[last_end:m.start()]
+        current = m.group(1).upper().split()[0]  # ACCOUNT → from "ACCOUNT ACTIVITY"
+        last_end = m.end()
+    sections[current] = text[last_end:]
+    return sections
 
 
 def parse_robinhood(text: str, source_file: str) -> tuple[list[InvestmentTransaction], list[InvestmentHolding]]:
-    transactions = []
-    holdings = []
+    transactions: list[InvestmentTransaction] = []
+    holdings: list[InvestmentHolding] = []
     account = _extract_account_number(text, r"account\s*(?:number|#|no\.?)[:\s]+([A-Z0-9\-]+)", "Robinhood")
-
     as_of = _extract_as_of_date(text)
 
-    for m in _RH_TX_RE.finditer(text):
+    sections = _split_sections(text)
+
+    # ---- Parse transactions from ACCOUNT section only ----
+    activity_text = sections.get("ACCOUNT", "") or sections.get("_preamble", "") or text
+    for m in _RH_TX_RE.finditer(activity_text):
         date = _parse_date(m.group(1))
         if not date:
             continue
@@ -206,16 +236,39 @@ def parse_robinhood(text: str, source_file: str) -> tuple[list[InvestmentTransac
             broker="robinhood",
         ))
 
-    for m in _RH_HOLD_RE.finditer(text):
+    # Non-ticker deposits (ACH etc.)
+    for m in _RH_NOTX_RE.finditer(activity_text):
+        date = _parse_date(m.group(1))
+        if not date:
+            continue
+        amt = _parse_amount(m.group(4))
+        if amt is None:
+            continue
+        tx_type = _normalise_tx_type(m.group(3))
+        transactions.append(InvestmentTransaction(
+            date=date,
+            transaction_type=tx_type,
+            ticker=None,
+            name=m.group(2).strip(),
+            quantity=None,
+            price_per_unit=None,
+            total_value=abs(amt),
+            account=account,
+            broker="robinhood",
+        ))
+
+    # ---- Parse holdings from HOLDINGS section only ----
+    holdings_text = sections.get("HOLDINGS", "")
+    for m in _RH_HOLD_RE.finditer(holdings_text):
         qty = _parse_amount(m.group(3))
         price = _parse_amount(m.group(4))
         total = _parse_amount(m.group(5))
         if total is None:
             continue
         gl_raw = m.group(6)
-        gl = _parse_amount(gl_raw) if gl_raw else None
+        gl = _parse_amount(gl_raw.replace("$", "")) if gl_raw else None
         glp_raw = m.group(7)
-        glp = float(glp_raw.replace("%", "")) if glp_raw else None
+        glp = float(glp_raw) if glp_raw else None
         holdings.append(InvestmentHolding(
             as_of_date=as_of,
             ticker=m.group(1).strip(),
