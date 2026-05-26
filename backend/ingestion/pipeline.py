@@ -7,7 +7,7 @@ from pathlib import Path
 
 from backend.ingestion.parser import parse_pdf
 from backend.ingestion.validator import validate
-from backend.storage.database import db
+from backend.storage.database import db, is_duplicate_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +34,16 @@ def _record_ingestion(file_hash: str, filename: str, file_size: int,
 
 def _store_transactions(transactions, source_file: str, category_fn) -> int:
     stored = 0
+    skipped = 0
     with db() as conn:
         for tx in transactions:
             category = category_fn(tx.description)
             try:
+                # Cross-source dedup: skip if a matching transaction already exists
+                # from any source (Teller, another PDF, etc.)
+                if is_duplicate_transaction(conn, tx.date, tx.amount, tx.transaction_type, tx.description):
+                    skipped += 1
+                    continue
                 conn.execute(
                     """INSERT OR IGNORE INTO transactions
                        (date, description, amount, currency, transaction_type,
@@ -50,6 +56,8 @@ def _store_transactions(transactions, source_file: str, category_fn) -> int:
                 stored += conn.execute("SELECT changes()").fetchone()[0]
             except Exception as exc:
                 logger.warning("[Pipeline] Could not store transaction: %s", exc)
+    if skipped:
+        logger.info("[Pipeline] %s — skipped %d cross-source duplicate(s)", source_file, skipped)
     return stored
 
 

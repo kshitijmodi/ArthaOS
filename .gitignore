@@ -6,6 +6,10 @@
 gmail_token.json
 gmail_credentials.json
 
+# Teller certificates (sensitive — never commit)
+backend/teller/certificate.pem
+backend/teller/private_key.pem
+
 # Data (local financial documents — never commit)
 data/statements/
 data/faiss_index/

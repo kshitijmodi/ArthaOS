@@ -37,9 +37,16 @@ YAHOO_IMAP_PORT = 993
 # Whitelisted sender domains for email fetcher
 WHITELISTED_DOMAINS = os.getenv(
     "WHITELISTED_DOMAINS",
+    # Indian banks
     "hdfcbank.com,icicibank.com,axisbank.com,sbicard.com,kotakbank.com,"
     "yesbank.in,indusind.com,sc.com,hsbc.co.in,amexindia.com,"
-    "alerts.jio.com,airtel.in,vodafone.in",
+    "alerts.jio.com,airtel.in,vodafone.in,"
+    # US banks & cards
+    "biltrewards.com,chase.com,bofa.com,bankofamerica.com,citi.com,"
+    "citibank.com,americanexpress.com,amex.com,discover.com,"
+    "capitalone.com,wellsfargo.com,usbank.com,synchrony.com,"
+    "barclaysus.com,ally.com,marcus.com,apple.com,td.com,"
+    "schwab.com,fidelity.com,vanguard.com,robinhood.com",
 ).split(",")
 
 # Agent thresholds (all configurable)

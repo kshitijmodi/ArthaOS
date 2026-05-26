@@ -24,6 +24,14 @@ def _daily_email_fetch():
     except Exception as exc:
         logger.error("[Scheduler] Email fetch failed: %s", exc)
 
+    # Teller sync after email fetch
+    try:
+        from backend.teller.sync import sync_all
+        result = sync_all()
+        logger.info("[Scheduler] Teller sync complete: %s", result)
+    except Exception as exc:
+        logger.error("[Scheduler] Teller sync failed: %s", exc)
+
 
 def _daily_agent_run():
     logger.info("[Scheduler] Running daily agent scan...")
@@ -38,17 +46,29 @@ def _daily_agent_run():
         logger.error("[Scheduler] Agent run failed: %s", exc)
 
 
+def _teller_poll():
+    try:
+        from backend.teller.sync import sync_all
+        result = sync_all()
+        if result.get("new_transactions", 0) > 0:
+            logger.info("[Scheduler] Teller poll — %d new transaction(s)", result["new_transactions"])
+    except Exception as exc:
+        logger.error("[Scheduler] Teller poll failed: %s", exc)
+
+
 def start_scheduler():
     global _scheduler
     _scheduler = BackgroundScheduler()
 
-    # Email fetch every 24h at 07:00
-    _scheduler.add_job(_daily_email_fetch, "cron", hour=7, minute=0, id="email_fetch")
-    # Agent scan every day at 07:30 (after fetch)
-    _scheduler.add_job(_daily_agent_run, "cron", hour=7, minute=30, id="agent_scan")
+    # Email fetch every 24h at 13:00 ET
+    _scheduler.add_job(_daily_email_fetch, "cron", hour=13, minute=0, id="email_fetch", timezone="America/New_York")
+    # Agent scan every day at 13:30 ET (after fetch)
+    _scheduler.add_job(_daily_agent_run, "cron", hour=13, minute=30, id="agent_scan", timezone="America/New_York")
+    # Teller poll every 30 minutes
+    _scheduler.add_job(_teller_poll, "interval", minutes=30, id="teller_poll")
 
     _scheduler.start()
-    logger.info("[Scheduler] Started — daily fetch at 07:00, agent scan at 07:30")
+    logger.info("[Scheduler] Started — daily fetch at 13:00 ET, agent scan at 13:30 ET, Teller poll every 30m")
     return _scheduler
 
 

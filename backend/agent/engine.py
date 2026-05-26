@@ -478,10 +478,35 @@ _FINANCE_COMMANDS = {
     "run":       "run_all",
     "scan":      "run_all",
     "help":      "help",
+    "balance":   "balance",
+    "balances":  "balance",
+}
+
+_BALANCE_KEYWORDS = re.compile(
+    r"\b(balance|balances|account\s+balance|how\s+much.*(?:in|have)|what.*balance)\b",
+    re.IGNORECASE,
+)
+_INSTITUTION_KEYWORDS = {
+    "wells fargo": "wells fargo",
+    "wellsfargo":  "wells fargo",
+    "bofa":        "bank of america",
+    "bofA":        "bank of america",
+    "bank of america": "bank of america",
+    "chase":       "chase",
+    "amex":        "american express",
+    "american express": "american express",
+    "citi":        "citi",
+    "citibank":    "citi",
+    "discover":    "discover",
+    "capital one": "capital one",
+    "schwab":      "schwab",
+    "fidelity":    "fidelity",
+    "robinhood":   "robinhood",
 }
 
 _HELP_TEXT = (
     "Available /finance sub-commands:\n"
+    "  balance    — show all account balances\n"
     "  summary    — month-to-date spend overview\n"
     "  alerts     — list recent unread alerts\n"
     "  overspend  — check category overspend\n"
@@ -491,7 +516,8 @@ _HELP_TEXT = (
     "  recurring  — check recurring charge changes\n"
     "  due        — check upcoming card due dates\n"
     "  run        — run all detection modules now\n"
-    "  help       — show this message"
+    "  help       — show this message\n\n"
+    "Or ask naturally: 'what's my Wells Fargo balance?'"
 )
 
 
@@ -515,6 +541,77 @@ def handle_finance_command(query: str) -> dict:
         }
 
 
+def _handle_balance_query(query: str) -> dict:
+    """Query teller_accounts for balances, optionally filtered by institution."""
+    query_lower = query.lower()
+
+    # Detect institution filter
+    institution_filter = None
+    for keyword, canonical in _INSTITUTION_KEYWORDS.items():
+        if keyword in query_lower:
+            institution_filter = canonical
+            break
+
+    with db() as conn:
+        if institution_filter:
+            rows = conn.execute(
+                """SELECT ta.institution, ta.name, ta.type, ta.subtype,
+                          ta.balance_ledger, ta.balance_available, ta.last_synced_at,
+                          te.status
+                   FROM teller_accounts ta
+                   JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
+                   WHERE te.status = 'active'
+                     AND LOWER(ta.institution) LIKE ?
+                   ORDER BY ta.type, ta.name""",
+                (f"%{institution_filter}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT ta.institution, ta.name, ta.type, ta.subtype,
+                          ta.balance_ledger, ta.balance_available, ta.last_synced_at,
+                          te.status
+                   FROM teller_accounts ta
+                   JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
+                   WHERE te.status = 'active'
+                   ORDER BY ta.institution, ta.type, ta.name""",
+            ).fetchall()
+
+    if not rows:
+        if institution_filter:
+            return {
+                "answer": f"No connected accounts found for {institution_filter.title()}. Make sure it's linked in your dashboard.",
+                "low_confidence": False,
+                "sources": [],
+            }
+        return {
+            "answer": "No connected bank accounts found. Link your accounts in the dashboard Settings → Connected Accounts.",
+            "low_confidence": False,
+            "sources": [],
+        }
+
+    lines = []
+    current_institution = None
+    total = 0.0
+    for row in rows:
+        if row["institution"] != current_institution:
+            current_institution = row["institution"]
+            lines.append(f"\n*{current_institution}*")
+        balance = row["balance_ledger"] if row["balance_ledger"] is not None else row["balance_available"]
+        account_type = f"{row['type']}" + (f" · {row['subtype']}" if row["subtype"] else "")
+        balance_str = f"${balance:,.2f}" if balance is not None else "N/A"
+        lines.append(f"  {row['name']} ({account_type}): {balance_str}")
+        if balance:
+            total += balance
+
+    suffix = f"\n\n*Total: ${total:,.2f}*" if not institution_filter and len(rows) > 1 else ""
+    synced = rows[0]["last_synced_at"] or "unknown"
+    return {
+        "answer": "Account Balances:" + "".join(lines) + suffix + f"\n\n_Last synced: {synced}_",
+        "low_confidence": False,
+        "sources": [],
+    }
+
+
 def _dispatch_finance_command(query: str) -> dict:
     tokens = query.strip().lower().split()
     sub = tokens[0] if tokens else "help"
@@ -522,6 +619,11 @@ def _dispatch_finance_command(query: str) -> dict:
     logger.debug("[Finance] _dispatch: query=%r → sub=%r → action=%r", query, sub, action)
 
     if action is None:
+        # Check if it's a free-form balance question before routing to RAG
+        if _BALANCE_KEYWORDS.search(query):
+            logger.debug("[Finance] Detected balance query — routing to balance handler")
+            return _handle_balance_query(query)
+
         # Not a sub-command — treat the whole query as a free-form question via RAG
         logger.debug("[Finance] No sub-command match for %r — routing to RAG", query)
         from backend.rag.pipeline import query as rag_query
@@ -534,6 +636,9 @@ def _dispatch_finance_command(query: str) -> dict:
 
     if action == "help":
         return {"answer": _HELP_TEXT, "low_confidence": False, "sources": []}
+
+    if action == "balance":
+        return _handle_balance_query(query)
 
     if action == "run_all":
         months = _months_of_data()

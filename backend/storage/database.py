@@ -148,6 +148,29 @@ def init_db():
             UNIQUE(as_of_date, ticker, account, source_file)
         );
 
+        CREATE TABLE IF NOT EXISTS teller_enrollments (
+            enrollment_id   TEXT PRIMARY KEY,
+            access_token    TEXT NOT NULL,
+            institution     TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'active',
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            last_synced_at  TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS teller_accounts (
+            account_id        TEXT PRIMARY KEY,
+            enrollment_id     TEXT NOT NULL,
+            institution       TEXT NOT NULL,
+            name              TEXT NOT NULL,
+            type              TEXT NOT NULL,
+            subtype           TEXT,
+            currency          TEXT NOT NULL DEFAULT 'USD',
+            balance_available REAL,
+            balance_ledger    REAL,
+            last_synced_at    TEXT,
+            FOREIGN KEY (enrollment_id) REFERENCES teller_enrollments(enrollment_id)
+        );
+
         -- Seed system_state rows
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('gmail', NULL);
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('yahoo', NULL);
@@ -169,6 +192,38 @@ def init_db():
         """)
     _seed_categories()
     print(f"[DB] Initialised at {DB_PATH}")
+
+
+def is_duplicate_transaction(
+    conn: sqlite3.Connection,
+    date: str,
+    amount: float,
+    transaction_type: str,
+    description: str,
+    similarity_threshold: float = 0.80,
+) -> bool:
+    """
+    Cross-source duplicate check.
+    Returns True if a transaction with the same date, amount, type,
+    and sufficiently similar description already exists in the DB.
+    """
+    from difflib import SequenceMatcher
+    rows = conn.execute(
+        """SELECT description FROM transactions
+           WHERE date = ?
+             AND ABS(amount - ?) < 0.01
+             AND transaction_type = ?""",
+        (date, amount, transaction_type),
+    ).fetchall()
+    desc_lower = description.lower().strip()
+    for row in rows:
+        existing = (row["description"] or "").lower().strip()
+        if not existing:
+            continue
+        ratio = SequenceMatcher(None, desc_lower, existing).ratio()
+        if ratio >= similarity_threshold:
+            return True
+    return False
 
 
 DEFAULT_CATEGORIES = [

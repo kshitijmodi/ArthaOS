@@ -718,3 +718,77 @@ def whatsapp_query(req: WhatsAppQuery):
     from backend.rag.pipeline import query
     result = query(req.query)
     return {"answer": result.answer, "low_confidence": result.low_confidence}
+
+
+# ---------------------------------------------------------------------------
+# Teller
+# ---------------------------------------------------------------------------
+
+class TellerEnrollmentRequest(BaseModel):
+    enrollment_id: str
+    access_token: str
+    institution: str
+
+@app.post("/teller/enroll")
+def teller_enroll(req: TellerEnrollmentRequest):
+    """Save a new Teller enrollment (called after Teller Link success)."""
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO teller_enrollments (enrollment_id, access_token, institution)
+               VALUES (?, ?, ?)
+               ON CONFLICT(enrollment_id) DO UPDATE SET
+                 access_token = excluded.access_token,
+                 status = 'active'""",
+            (req.enrollment_id, req.access_token, req.institution),
+        )
+    # Kick off an immediate sync in the background
+    from backend.teller.sync import sync_enrollment
+    import threading
+    threading.Thread(
+        target=sync_enrollment,
+        args=(req.enrollment_id, req.access_token, req.institution),
+        daemon=True,
+    ).start()
+    return {"status": "enrolled", "enrollment_id": req.enrollment_id}
+
+
+@app.get("/teller/enrollments")
+def teller_enrollments():
+    """List all connected Teller institutions with account counts and balances."""
+    with db() as conn:
+        enrollments = conn.execute(
+            "SELECT * FROM teller_enrollments ORDER BY created_at DESC"
+        ).fetchall()
+        accounts = conn.execute(
+            "SELECT * FROM teller_accounts ORDER BY institution, name"
+        ).fetchall()
+
+    acc_by_enrollment: dict = {}
+    for a in accounts:
+        acc_by_enrollment.setdefault(a["enrollment_id"], []).append(dict(a))
+
+    return {
+        "enrollments": [
+            {**dict(e), "accounts": acc_by_enrollment.get(e["enrollment_id"], [])}
+            for e in enrollments
+        ]
+    }
+
+
+@app.delete("/teller/enrollments/{enrollment_id}")
+def teller_disconnect(enrollment_id: str):
+    """Mark an enrollment inactive (disconnect institution)."""
+    with db() as conn:
+        conn.execute(
+            "UPDATE teller_enrollments SET status = 'inactive' WHERE enrollment_id = ?",
+            (enrollment_id,),
+        )
+    return {"status": "disconnected"}
+
+
+@app.post("/teller/sync")
+def teller_sync_now():
+    """Manually trigger a Teller sync for all active enrollments."""
+    from backend.teller.sync import sync_all
+    result = sync_all()
+    return result

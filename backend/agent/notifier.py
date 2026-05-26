@@ -34,19 +34,15 @@ async def push_new_alerts(alert_ids: list[int]):
         except Exception as exc:
             logger.warning("[Notifier] WebSocket broadcast failed: %s", exc)
 
-        # Push high-severity to WhatsApp via REA
-        if alert["severity"] == "high":
-            await _send_whatsapp(alert["description"])
-
-        # Mark whatsapp_sent if we sent it
-        if alert["severity"] == "high":
-            with db() as conn:
-                conn.execute(
-                    "UPDATE alerts SET whatsapp_sent=1 WHERE id=?", (alert["id"],)
-                )
+        # Push all severities to WhatsApp via REA
+        await _send_whatsapp(alert["severity"], alert["description"])
+        with db() as conn:
+            conn.execute(
+                "UPDATE alerts SET whatsapp_sent=1 WHERE id=?", (alert["id"],)
+            )
 
 
-async def _send_whatsapp(message: str):
+async def _send_whatsapp(severity: str, message: str):
     """
     POST the alert message to the REA Communication Agent.
     REA is responsible for sending it to the user's WhatsApp.
@@ -57,12 +53,13 @@ async def _send_whatsapp(message: str):
         logger.debug("[Notifier] REA_WEBHOOK_URL not set — skipping WhatsApp push")
         return
 
+    severity_emoji = {"high": "🚨", "medium": "⚠️", "low": "ℹ️"}.get(severity, "🔔")
     try:
         import httpx
         async with httpx.AsyncClient(timeout=5) as client:
             await client.post(rea_url, json={
                 "type": "arthaos_alert",
-                "message": f"🚨 ArthaOS Alert\n\n{message}",
+                "message": f"{severity_emoji} ArthaOS Alert ({severity.upper()})\n\n{message}",
             })
         logger.info("[Notifier] Alert sent to WhatsApp via REA")
     except Exception as exc:

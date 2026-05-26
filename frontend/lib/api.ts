@@ -98,3 +98,39 @@ export async function sendFinanceCommand(args: string): Promise<QueryResponse> {
 }
 
 export const getIngestionStatus = () => apiFetch("/ingestion/status");
+
+// Teller
+export interface TellerAccount {
+  account_id: string;
+  name: string;
+  type: string;
+  subtype: string;
+  currency: string;
+  balance_available: number | null;
+  balance_ledger: number | null;
+  last_synced_at: string | null;
+}
+
+export interface TellerEnrollment {
+  enrollment_id: string;
+  institution: string;
+  status: string;
+  created_at: string;
+  last_synced_at: string | null;
+  accounts: TellerAccount[];
+}
+
+export const getTellerEnrollments = () =>
+  apiFetch<{ enrollments: TellerEnrollment[] }>("/teller/enrollments");
+
+export const tellerEnroll = (enrollment_id: string, access_token: string, institution: string) =>
+  apiFetch("/teller/enroll", {
+    method: "POST",
+    body: JSON.stringify({ enrollment_id, access_token, institution }),
+  });
+
+export const tellerDisconnect = (enrollment_id: string) =>
+  apiFetch(`/teller/enrollments/${enrollment_id}`, { method: "DELETE" });
+
+export const tellerSyncNow = () =>
+  apiFetch("/teller/sync", { method: "POST" });

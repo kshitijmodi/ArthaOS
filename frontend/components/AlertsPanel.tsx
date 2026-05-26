@@ -26,7 +26,18 @@ function groupByType(alerts: Alert[]): [string, Alert[]][] {
   return sorted;
 }
 
-export default function AlertsPanel() {
+const ALERT_TYPE_FILTER_MAP: Record<string, string> = {
+  duplicate: "duplicate_charge",
+  interest:  "interest_fee",
+  late_fee:  "late_fee",
+  suspicious: "suspicious_charge",
+};
+
+interface AlertsPanelProps {
+  alertTypes?: string[];
+}
+
+export default function AlertsPanel({ alertTypes = [] }: AlertsPanelProps) {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -62,22 +73,27 @@ export default function AlertsPanel() {
     </div>
   );
 
-  const groups = groupByType(alerts);
+  const visibleAlerts = alertTypes.length > 0
+    ? alerts.filter(a => alertTypes.map(k => ALERT_TYPE_FILTER_MAP[k]).includes(a.alert_type ?? ""))
+    : alerts;
+  const groups = groupByType(visibleAlerts);
 
   return (
     <section className="rounded-2xl border border-border bg-surface p-5">
       <div className="flex items-center gap-2 mb-4">
         <Bell size={16} className="text-warn" />
         <h2 className="font-semibold text-tx">Alerts</h2>
-        {alerts.length > 0 && (
+        {visibleAlerts.length > 0 && (
           <span className="ml-auto text-xs font-semibold px-2 py-0.5 rounded-full bg-expense/10 text-expense border border-expense/20">
-            {alerts.length} unread
+            {visibleAlerts.length} unread
           </span>
         )}
       </div>
 
-      {alerts.length === 0 ? (
-        <p className="text-sm text-tx-3 py-6 text-center">No unread alerts — all clear</p>
+      {visibleAlerts.length === 0 ? (
+        <p className="text-sm text-tx-3 py-6 text-center">
+          {alerts.length === 0 ? "No unread alerts — all clear" : "No alerts match the selected filter"}
+        </p>
       ) : (
         <div className="space-y-4">
           {groups.map(([type, typeAlerts]) => {

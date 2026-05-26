@@ -14,6 +14,7 @@ import InvestmentsPanel from "@/components/InvestmentsPanel";
 import InsightsPanel from "@/components/InsightsPanel";
 import IngestionStatus from "@/components/IngestionStatus";
 import CategoryManager from "@/components/CategoryManager";
+import TellerConnect from "@/components/TellerConnect";
 import { getTransactions, Transaction } from "@/lib/api";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -128,6 +129,7 @@ export default function Page() {
               <h1 className="text-xl font-bold text-tx">Settings</h1>
               <p className="text-sm text-tx-2 mt-1">Email ingestion, categories and system configuration</p>
             </div>
+            <TellerConnect />
             <IngestionStatus />
             <InsightsPanel />
             <CategoryManager />
@@ -264,7 +266,7 @@ function DashboardView({
 
       <div>
         <h2 className="font-semibold text-tx mb-4">Active Alerts</h2>
-        <AlertsPanel />
+        <AlertsPanel alertTypes={filters.alertTypes} />
       </div>
     </div>
   );
