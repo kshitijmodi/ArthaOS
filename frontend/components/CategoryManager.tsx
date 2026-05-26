@@ -31,11 +31,8 @@ export default function CategoryManager() {
   useEffect(() => { load(); }, []);
 
   const startEdit = (cat: Category) => {
-    setEditId(cat.id);
-    setEditName(cat.name);
-    setEditKeywords(cat.keywords);
+    setEditId(cat.id); setEditName(cat.name); setEditKeywords(cat.keywords);
   };
-
   const cancelEdit = () => setEditId(null);
 
   const saveEdit = async (id: number) => {
@@ -45,8 +42,7 @@ export default function CategoryManager() {
         method: "PATCH",
         body: JSON.stringify({ name: editName, keywords: editKeywords }),
       });
-      setEditId(null);
-      load();
+      setEditId(null); load();
     } catch (e) { console.error(e); }
     finally { setSaving(false); }
   };
@@ -64,139 +60,115 @@ export default function CategoryManager() {
         method: "POST",
         body: JSON.stringify({ name: newName.trim(), keywords: newKeywords.trim() }),
       });
-      setNewName("");
-      setNewKeywords("");
-      setAdding(false);
-      load();
+      setNewName(""); setNewKeywords(""); setAdding(false); load();
     } catch (e) { console.error(e); }
     finally { setSaving(false); }
   };
 
   if (loading) return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-5 animate-pulse h-40" />
+    <div className="rounded-2xl border border-border bg-surface p-5 animate-pulse h-40" />
   );
 
+  const inputCls = "w-full bg-bg border border-border rounded-xl px-3 py-2 text-sm text-tx placeholder:text-tx-3 focus:outline-none focus:border-accent/50 transition-colors";
+
   return (
-    <section className="space-y-4">
-      <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-        <div className="flex items-center gap-2 mb-5">
-          <Tag size={16} className="text-blue-400" />
-          <h3 className="font-semibold text-white">Categories</h3>
-          <span className="text-xs text-white/40 ml-1">({categories.length})</span>
-          <button
-            onClick={() => setAdding(true)}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs text-white transition-colors"
-          >
-            <Plus size={13} /> Add category
-          </button>
-        </div>
-
-        {adding && (
-          <div className="mb-4 p-4 rounded-lg border border-blue-500/30 bg-blue-500/10 space-y-3">
-            <p className="text-xs text-white/60 font-medium">New category</p>
-            <input
-              autoFocus
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              placeholder="Category name"
-              className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/50"
-            />
-            <input
-              value={newKeywords}
-              onChange={e => setNewKeywords(e.target.value)}
-              placeholder="Keywords (comma-separated, e.g. walmart, target, costco)"
-              className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/50"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={addCategory}
-                disabled={saving || !newName.trim()}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-lg text-xs text-white transition-colors flex items-center gap-1"
-              >
-                <Check size={12} /> Save
-              </button>
-              <button
-                onClick={() => { setAdding(false); setNewName(""); setNewKeywords(""); }}
-                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white/70 transition-colors flex items-center gap-1"
-              >
-                <X size={12} /> Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          {categories.map(cat => (
-            <div key={cat.id} className="rounded-lg border border-white/10 bg-white/5 p-3">
-              {editId === cat.id ? (
-                <div className="space-y-2">
-                  <input
-                    autoFocus
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                  />
-                  <input
-                    value={editKeywords}
-                    onChange={e => setEditKeywords(e.target.value)}
-                    placeholder="Keywords (comma-separated)"
-                    className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/50"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => saveEdit(cat.id)}
-                      disabled={saving}
-                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-xs text-white flex items-center gap-1"
-                    >
-                      <Check size={11} /> Save
-                    </button>
-                    <button
-                      onClick={cancelEdit}
-                      className="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded text-xs text-white/70 flex items-center gap-1"
-                    >
-                      <X size={11} /> Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-white">{cat.name}</span>
-                      {cat.is_system === 1 && (
-                        <span className="text-xs text-white/30 border border-white/10 rounded px-1.5 py-0.5">system</span>
-                      )}
-                    </div>
-                    {cat.keywords && (
-                      <p className="text-xs text-white/40 mt-0.5 truncate">{cat.keywords}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => startEdit(cat)}
-                      className="p-1.5 text-white/30 hover:text-white/70 transition-colors rounded"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    {cat.is_system === 0 && (
-                      <button
-                        onClick={() => deleteCategory(cat.id)}
-                        className="p-1.5 text-white/30 hover:text-red-400 transition-colors rounded"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <p className="text-xs text-white/30 mt-4">
-          System categories cannot be deleted. Keywords are used for automatic transaction matching.
-        </p>
+    <section className="rounded-2xl border border-border bg-surface p-5">
+      <div className="flex items-center gap-2 mb-5">
+        <Tag size={16} className="text-accent" />
+        <h3 className="font-semibold text-tx">Categories</h3>
+        <span className="text-xs text-tx-3">({categories.length})</span>
+        <button
+          onClick={() => setAdding(true)}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent-h rounded-xl text-xs text-white transition-colors"
+        >
+          <Plus size={13} /> Add
+        </button>
       </div>
+
+      {adding && (
+        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 space-y-3">
+          <p className="text-xs text-tx-2 font-semibold">New category</p>
+          <input autoFocus value={newName} onChange={e => setNewName(e.target.value)} placeholder="Name" className={inputCls} />
+          <input value={newKeywords} onChange={e => setNewKeywords(e.target.value)} placeholder="Keywords (comma-separated)" className={inputCls} />
+          <div className="flex gap-2">
+            <button
+              onClick={addCategory}
+              disabled={saving || !newName.trim()}
+              className="px-3 py-1.5 bg-accent hover:bg-accent-h disabled:opacity-40 rounded-lg text-xs text-white flex items-center gap-1"
+            >
+              <Check size={12} /> Save
+            </button>
+            <button
+              onClick={() => { setAdding(false); setNewName(""); setNewKeywords(""); }}
+              className="px-3 py-1.5 bg-elevated hover:bg-border rounded-lg text-xs text-tx-2 flex items-center gap-1"
+            >
+              <X size={12} /> Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {categories.map(cat => (
+          <div key={cat.id} className="rounded-xl border border-border bg-elevated p-3.5">
+            {editId === cat.id ? (
+              <div className="space-y-2">
+                <input autoFocus value={editName} onChange={e => setEditName(e.target.value)} className={inputCls} />
+                <input value={editKeywords} onChange={e => setEditKeywords(e.target.value)} placeholder="Keywords (comma-separated)" className={inputCls} />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => saveEdit(cat.id)}
+                    disabled={saving}
+                    className="px-2.5 py-1 bg-accent hover:bg-accent-h disabled:opacity-40 rounded-lg text-xs text-white flex items-center gap-1"
+                  >
+                    <Check size={11} /> Save
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    className="px-2.5 py-1 bg-surface hover:bg-border rounded-lg text-xs text-tx-2 flex items-center gap-1"
+                  >
+                    <X size={11} /> Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-tx">{cat.name}</span>
+                    {cat.is_system === 1 && (
+                      <span className="text-[10px] text-tx-3 border border-border rounded px-1.5 py-0.5">system</span>
+                    )}
+                  </div>
+                  {cat.keywords && (
+                    <p className="text-xs text-tx-3 mt-0.5 truncate">{cat.keywords}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => startEdit(cat)}
+                    className="p-1.5 text-tx-3 hover:text-tx-2 transition-colors rounded-lg"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  {cat.is_system === 0 && (
+                    <button
+                      onClick={() => deleteCategory(cat.id)}
+                      className="p-1.5 text-tx-3 hover:text-expense transition-colors rounded-lg"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <p className="text-xs text-tx-3 mt-4">
+        System categories cannot be deleted. Keywords are used for automatic transaction matching.
+      </p>
     </section>
   );
 }

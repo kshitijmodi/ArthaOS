@@ -95,6 +95,25 @@ def _monthly_trend(months: int = 6) -> list[dict]:
     return [dict(r) for r in reversed(rows)]
 
 
+def _recent_charge_alerts(days: int = 30) -> list[dict]:
+    """Return charge alerts (duplicate, interest, late fee, suspicious) from the last N days."""
+    try:
+        from backend.storage.database import db
+        with db() as conn:
+            rows = conn.execute(
+                """SELECT alert_type, severity, description, created_at
+                   FROM alerts
+                   WHERE alert_type IN ('duplicate_charge','interest_fee','late_fee','suspicious_charge')
+                     AND created_at >= datetime('now', ?)
+                   ORDER BY created_at DESC""",
+                (f"-{days} days",),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:
+        logger.debug("[Insights] Could not fetch charge alerts: %s", exc)
+        return []
+
+
 # ---------------------------------------------------------------------------
 # 1. Affordability estimation
 # ---------------------------------------------------------------------------
@@ -231,6 +250,88 @@ class TrendRecommendation:
     severity: str   # "positive" / "neutral" / "warning"
 
 
+def generate_anomaly_recommendations() -> list[TrendRecommendation]:
+    """
+    Generate TrendRecommendation entries for each type of charge anomaly
+    detected in the last 30 days (duplicates, interest fees, late fees,
+    and suspicious charges).
+    """
+    alerts = _recent_charge_alerts(days=30)
+    if not alerts:
+        return []
+
+    # Group by alert_type and collect examples
+    grouped: dict[str, list[dict]] = {}
+    for alert in alerts:
+        grouped.setdefault(alert["alert_type"], []).append(alert)
+
+    recommendations: list[TrendRecommendation] = []
+
+    if "duplicate_charge" in grouped:
+        items = grouped["duplicate_charge"]
+        count = len(items)
+        example = items[0]["description"]
+        recommendations.append(TrendRecommendation(
+            type="duplicate_charge",
+            title=f"{count} potential duplicate charge{'s' if count > 1 else ''} detected",
+            body=(
+                f"We found {count} possible duplicate transaction{'s' if count > 1 else ''} "
+                f"in the last 30 days. Example: {example}. "
+                "Review your statements and contact your bank or merchant to dispute any confirmed duplicates."
+            ),
+            severity="warning",
+        ))
+
+    if "interest_fee" in grouped:
+        items = grouped["interest_fee"]
+        count = len(items)
+        recommendations.append(TrendRecommendation(
+            type="interest_fee",
+            title=f"{count} interest or finance charge{'s' if count > 1 else ''} detected",
+            body=(
+                f"{count} interest or finance charge{'s were' if count > 1 else ' was'} "
+                "recorded in the last 30 days. Paying your full balance before the due date "
+                "eliminates revolving interest. Consider setting up autopay for the statement balance."
+            ),
+            severity="warning",
+        ))
+
+    if "late_fee" in grouped:
+        items = grouped["late_fee"]
+        count = len(items)
+        high_severity = sum(1 for a in items if a["severity"] == "high")
+        body = (
+            f"{count} late payment fee{'s' if count > 1 else ''} detected in the last 30 days"
+            + (f", including {high_severity} high-severity penalt{'ies' if high_severity > 1 else 'y'}" if high_severity else "")
+            + ". Set up automatic minimum payments to avoid future late fees, and call your lender — "
+            "first-time late fees are often waived on request."
+        )
+        recommendations.append(TrendRecommendation(
+            type="late_fee",
+            title=f"{count} late fee{'s' if count > 1 else ''} detected",
+            body=body,
+            severity="warning",
+        ))
+
+    if "suspicious_charge" in grouped:
+        items = grouped["suspicious_charge"]
+        count = len(items)
+        example = items[0]["description"]
+        recommendations.append(TrendRecommendation(
+            type="suspicious_charge",
+            title=f"{count} suspicious charge{'s' if count > 1 else ''} flagged",
+            body=(
+                f"{count} transaction{'s' if count > 1 else ''} matched suspicious patterns "
+                f"in the last 30 days. Example: {example}. "
+                "Review each charge carefully and initiate a dispute with your card issuer "
+                "for any you do not recognise."
+            ),
+            severity="warning",
+        ))
+
+    return recommendations
+
+
 def generate_trend_recommendations() -> list[TrendRecommendation]:
     trend = _monthly_trend(6)
     cat_avgs = _category_averages()
@@ -294,6 +395,9 @@ def generate_trend_recommendations() -> list[TrendRecommendation]:
             body=f"EMIs are consuming ~{emi_avg/avg_income:.0%} of income (₹{emi_avg:,.0f}/month). Financial guidelines suggest keeping this below 40%.",
             severity="warning",
         ))
+
+    # --- Charge anomaly recommendations (duplicates, fees, suspicious) ---
+    recommendations.extend(generate_anomaly_recommendations())
 
     # --- No recommendations ---
     if not recommendations:

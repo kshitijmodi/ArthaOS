@@ -103,6 +103,15 @@ def ingest_file(path: Path, password: str = "") -> dict:
 
     stored = _store_transactions(parse_result.transactions, path.name, categorize)
 
+    # Run charge analysis after normalization and storage
+    try:
+        from backend.processing.charge_analyzer import analyze_charges, save_charge_alerts
+        alerts = analyze_charges(parse_result.transactions)
+        if alerts:
+            save_charge_alerts(alerts)
+    except Exception as exc:
+        logger.warning("[Pipeline] Charge analysis failed for %s: %s", path.name, exc)
+
     _record_ingestion(
         parse_result.file_hash, path.name, file_size,
         "warning" if validation.status == "warning" else "success",

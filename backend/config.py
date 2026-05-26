@@ -45,11 +45,24 @@ WHITELISTED_DOMAINS = os.getenv(
 # Agent thresholds (all configurable)
 OVERSPEND_THRESHOLD = float(os.getenv("OVERSPEND_THRESHOLD", "0.25"))   # 25%
 ANOMALY_MULTIPLIER = float(os.getenv("ANOMALY_MULTIPLIER", "2.0"))       # 2x category avg
-ANOMALY_UNKNOWN_MIN = float(os.getenv("ANOMALY_UNKNOWN_MIN", "2000"))    # ₹2000
+ANOMALY_UNKNOWN_MIN = float(os.getenv("ANOMALY_UNKNOWN_MIN", "2000"))    # ₹2000 floor for unknown categories
 DUPLICATE_WINDOW_DAYS = int(os.getenv("DUPLICATE_WINDOW_DAYS", "7"))
 BUDGET_OVERSHOOT_THRESHOLD = float(os.getenv("BUDGET_OVERSHOOT_THRESHOLD", "0.20"))  # 20%
 AGENT_MIN_MONTHS = int(os.getenv("AGENT_MIN_MONTHS", "2"))
 CARD_DUE_ALERT_DAYS = int(os.getenv("CARD_DUE_ALERT_DAYS", "3"))
+
+# Charge analyzer — anomaly detection rules
+# Minimum description similarity (0–1) to flag two charges as duplicates
+DUPLICATE_SIMILARITY_THRESHOLD = float(os.getenv("DUPLICATE_SIMILARITY_THRESHOLD", "0.80"))
+# Debit amount above which a late-fee alert is escalated to "high" severity
+LATE_FEE_HIGH_SEVERITY_AMOUNT = float(os.getenv("LATE_FEE_HIGH_SEVERITY_AMOUNT", "500.0"))
+# Days to look back when suppressing re-insertion of identical alert descriptions
+ALERT_DEDUP_WINDOW_DAYS = int(os.getenv("ALERT_DEDUP_WINDOW_DAYS", "7"))
+# Default confidence score for pattern-matched interest and late-fee alerts
+INTEREST_FEE_CONFIDENCE = float(os.getenv("INTEREST_FEE_CONFIDENCE", "0.90"))
+LATE_FEE_CONFIDENCE = float(os.getenv("LATE_FEE_CONFIDENCE", "0.90"))
+# Default confidence score for keyword-matched suspicious charges
+SUSPICIOUS_KEYWORD_CONFIDENCE = float(os.getenv("SUSPICIOUS_KEYWORD_CONFIDENCE", "0.85"))
 
 # FastAPI
 API_HOST = os.getenv("API_HOST", "0.0.0.0")

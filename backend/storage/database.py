@@ -120,6 +120,17 @@ def init_db():
             UNIQUE(date, ticker, transaction_type, total_value, source_file)
         );
 
+        CREATE TABLE IF NOT EXISTS charge_alerts (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_type           TEXT NOT NULL CHECK(alert_type IN ('duplicate','interest','late_fee','suspicious')),
+            amount               REAL NOT NULL,
+            transaction_id       INTEGER REFERENCES transactions(id),
+            confidence_score     REAL NOT NULL DEFAULT 1.0,
+            description          TEXT NOT NULL,
+            created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+            status               TEXT NOT NULL DEFAULT 'unread' CHECK(status IN ('unread','dismissed'))
+        );
+
         CREATE TABLE IF NOT EXISTS investment_holdings (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             as_of_date      TEXT NOT NULL,
@@ -149,6 +160,8 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_alerts_status         ON alerts(status);
         CREATE INDEX IF NOT EXISTS idx_alerts_severity       ON alerts(severity);
         CREATE INDEX IF NOT EXISTS idx_email_tracking_mailbox ON email_tracking(mailbox);
+        CREATE INDEX IF NOT EXISTS idx_charge_alerts_type   ON charge_alerts(alert_type);
+        CREATE INDEX IF NOT EXISTS idx_charge_alerts_status ON charge_alerts(status);
         CREATE INDEX IF NOT EXISTS idx_inv_tx_date   ON investment_transactions(date);
         CREATE INDEX IF NOT EXISTS idx_inv_tx_broker ON investment_transactions(broker);
         CREATE INDEX IF NOT EXISTS idx_inv_hld_date  ON investment_holdings(as_of_date);

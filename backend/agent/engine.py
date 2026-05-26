@@ -457,7 +457,8 @@ def run_agent() -> list[int]:
 
 
 # ---------------------------------------------------------------------------
-# Finance slash-command dispatcher
+# Finance command handler — used by /finance endpoint
+# Sub-commands dispatch to structured DB; free-form falls through to RAG.
 # ---------------------------------------------------------------------------
 
 _FINANCE_COMMANDS = {
@@ -521,13 +522,14 @@ def _dispatch_finance_command(query: str) -> dict:
     logger.debug("[Finance] _dispatch: query=%r → sub=%r → action=%r", query, sub, action)
 
     if action is None:
-        logger.debug("[Finance] Unknown sub-command %r; returning help text", sub)
+        # Not a sub-command — treat the whole query as a free-form question via RAG
+        logger.debug("[Finance] No sub-command match for %r — routing to RAG", query)
+        from backend.rag.pipeline import query as rag_query
+        result = rag_query(query)
         return {
-            "answer": (
-                f"Unknown finance command: '{sub}'.\n\n{_HELP_TEXT}"
-            ),
-            "low_confidence": True,
-            "sources": [],
+            "answer": result.answer,
+            "low_confidence": result.low_confidence,
+            "sources": [{"source": s.get("source"), "score": s.get("score")} for s in result.sources],
         }
 
     if action == "help":

@@ -16,12 +16,13 @@ const CHART_COLORS = [
 function CurrencyTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-xs">
-      <p className="text-white/60 mb-1">{label}</p>
+    <div className="bg-surface border border-border rounded-xl px-4 py-3 text-xs shadow-xl space-y-1">
+      <p className="text-tx-2 font-medium mb-1">{label}</p>
       {payload.map((p: any) => (
-        <p key={p.name} style={{ color: p.color }}>
-          {p.name}: {formatCurrency(p.value)}
-        </p>
+        <div key={p.name} className="flex items-center justify-between gap-4">
+          <span style={{ color: p.color }}>{p.name}</span>
+          <span className="font-semibold text-tx">{formatCurrency(p.value)}</span>
+        </div>
       ))}
     </div>
   );
@@ -50,8 +51,8 @@ export default function AnalyticsPanel() {
   return (
     <section className="space-y-6">
       {/* Monthly spend trend */}
-      <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-        <h3 className="font-semibold text-white mb-4">Monthly Spend Trend</h3>
+      <div className="rounded-xl border border-border bg-surface p-5">
+        <h3 className="font-semibold text-tx mb-4">Monthly Spend Trend</h3>
         {trend.length === 0 ? (
           <EmptyState />
         ) : (
@@ -63,8 +64,8 @@ export default function AnalyticsPanel() {
                   <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="month" tick={{ fill: "#ffffff60", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: "#ffffff60", fontSize: 11 }} axisLine={false} tickLine={false}
+              <XAxis dataKey="month" tick={{ fill: "rgb(var(--c-text2))", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "rgb(var(--c-text2))", fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={v => `₹${(v/1000).toFixed(0)}k`} />
               <Tooltip content={<CurrencyTooltip />} />
               <Area type="monotone" dataKey="total" name="Spend"
@@ -76,8 +77,8 @@ export default function AnalyticsPanel() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Category breakdown donut */}
-        <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-          <h3 className="font-semibold text-white mb-4">This Month by Category</h3>
+        <div className="rounded-xl border border-border bg-surface p-5">
+          <h3 className="font-semibold text-tx mb-4">This Month by Category</h3>
           {breakdown.length === 0 ? (
             <EmptyState />
           ) : (
@@ -98,8 +99,8 @@ export default function AnalyticsPanel() {
                   <li key={item.category} className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full shrink-0"
                       style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                    <span className="text-white/60 truncate flex-1">{item.category}</span>
-                    <span className="text-white/80 tabular-nums">{formatCurrency(item.total)}</span>
+                    <span className="text-tx-2 truncate flex-1">{item.category}</span>
+                    <span className="text-tx tabular-nums">{formatCurrency(item.total)}</span>
                   </li>
                 ))}
               </ul>
@@ -108,20 +109,20 @@ export default function AnalyticsPanel() {
         </div>
 
         {/* Month-over-month comparison bar */}
-        <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-          <h3 className="font-semibold text-white mb-4">This vs Last Month</h3>
+        <div className="rounded-xl border border-border bg-surface p-5">
+          <h3 className="font-semibold text-tx mb-4">This vs Last Month</h3>
           {comparison.length === 0 ? (
             <EmptyState />
           ) : (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={comparison} margin={{ top: 4, right: 8, bottom: 0, left: 0 }} barCategoryGap="30%">
-                <XAxis dataKey="category" tick={{ fill: "#ffffff60", fontSize: 10 }}
+                <XAxis dataKey="category" tick={{ fill: "rgb(var(--c-text2))", fontSize: 10 }}
                   axisLine={false} tickLine={false} interval={0}
                   angle={-30} textAnchor="end" height={40} />
-                <YAxis tick={{ fill: "#ffffff60", fontSize: 10 }} axisLine={false} tickLine={false}
+                <YAxis tick={{ fill: "rgb(var(--c-text2))", fontSize: 10 }} axisLine={false} tickLine={false}
                   tickFormatter={v => `₹${(v/1000).toFixed(0)}k`} />
                 <Tooltip content={<CurrencyTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 11, color: "#ffffff80" }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: "rgb(var(--c-text2))" }} />
                 <Bar dataKey="last_month" name="Last month" fill="#6366f1" radius={[3,3,0,0]} />
                 <Bar dataKey="this_month" name="This month" fill="#3b82f6" radius={[3,3,0,0]} />
               </BarChart>
@@ -134,16 +135,16 @@ export default function AnalyticsPanel() {
 }
 
 function EmptyState() {
-  return <p className="text-sm text-white/30 py-8 text-center">No data yet — ingest some statements first</p>;
+  return <p className="text-sm text-tx-3 py-8 text-center">No data yet — ingest some statements first</p>;
 }
 
 function AnalyticsSkeleton() {
   return (
     <section className="space-y-6 animate-pulse">
-      <div className="rounded-xl border border-white/10 bg-white/5 p-5 h-64" />
+      <div className="rounded-xl border border-border bg-surface p-5 h-64" />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-xl border border-white/10 bg-white/5 p-5 h-56" />
-        <div className="rounded-xl border border-white/10 bg-white/5 p-5 h-56" />
+        <div className="rounded-xl border border-border bg-surface p-5 h-56" />
+        <div className="rounded-xl border border-border bg-surface p-5 h-56" />
       </div>
     </section>
   );

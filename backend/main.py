@@ -59,6 +59,13 @@ async def push_alert(alert: dict):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Pre-warm embedding model in main thread — avoids torch deadlock on first thread-pool call
+    try:
+        from backend.embeddings.embedder import _get_model
+        _get_model()
+        logger.info("[ArthaOS] Embedding model warmed up")
+    except Exception as exc:
+        logger.warning("[ArthaOS] Embedding model warm-up failed: %s", exc)
     # Start file watcher in background thread
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, lambda: start_watcher(block=True))
@@ -74,7 +81,7 @@ app = FastAPI(title="ArthaOS", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -334,6 +341,51 @@ async def trigger_agent():
     alert_ids = run_agent()
     await push_new_alerts(alert_ids)
     return {"new_alerts": len(alert_ids), "alert_ids": alert_ids}
+
+
+@app.get("/charge-alerts")
+def get_charge_alerts(
+    alert_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    status: Optional[str] = None,
+):
+    allowed_types = {"duplicate", "interest", "late_fee", "suspicious"}
+    filters = ["1=1"]
+    params: list = []
+    if alert_type:
+        if alert_type not in allowed_types:
+            raise HTTPException(status_code=400, detail=f"Invalid alert_type. Must be one of: {', '.join(sorted(allowed_types))}")
+        filters.append("alert_type = ?")
+        params.append(alert_type)
+    if start_date:
+        filters.append("date(created_at) >= date(?)")
+        params.append(start_date)
+    if end_date:
+        filters.append("date(created_at) <= date(?)")
+        params.append(end_date)
+    if status:
+        filters.append("status = ?")
+        params.append(status)
+
+    where = " AND ".join(filters)
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM charge_alerts WHERE {where} ORDER BY created_at DESC",
+            params,
+        ).fetchall()
+    return {"charge_alerts": [dict(r) for r in rows]}
+
+
+@app.post("/charge-alerts/{alert_id}/dismiss")
+def dismiss_charge_alert(alert_id: int):
+    with db() as conn:
+        result = conn.execute(
+            "UPDATE charge_alerts SET status='dismissed' WHERE id=?", (alert_id,)
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Charge alert not found")
+    return {"status": "dismissed"}
 
 
 @app.get("/alerts/stats")
