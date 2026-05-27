@@ -64,7 +64,7 @@ def _save_alerts(alerts: list[Alert]) -> list[int]:
             existing = conn.execute(
                 """SELECT 1 FROM alerts
                    WHERE alert_type=? AND description=?
-                   AND created_at >= datetime('now','-7 days')""",
+                   AND created_at >= datetime('now','-30 days')""",
                 (alert.alert_type, alert.description),
             ).fetchone()
             if existing:
@@ -152,12 +152,12 @@ def detect_anomalies() -> list[Alert]:
         ).fetchall()
         avg_map = {r["category"]: r["avg_amount"] for r in avg_rows}
 
-        # Recent transactions
+        # Recent transactions — only last 7 days to avoid re-alerting on old data
         recent = conn.execute(
             """SELECT id, date, description, amount, category
                FROM transactions
                WHERE transaction_type='debit'
-                 AND date >= date('now','-30 days')
+                 AND date >= date('now','-7 days')
                ORDER BY amount DESC"""
         ).fetchall()
 
