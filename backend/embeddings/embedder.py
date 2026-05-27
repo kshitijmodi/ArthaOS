@@ -25,11 +25,18 @@ _index: faiss.IndexFlatL2 | None = None
 _metadata: list[dict] = []
 
 
-def _get_model() -> SentenceTransformer:
+def _get_model() -> SentenceTransformer | None:
     global _model
+    import os
+    if os.getenv("DISABLE_EMBEDDINGS", "").lower() in ("1", "true", "yes"):
+        return None
     if _model is None:
         logger.info("[Embedder] Loading model: %s", EMBEDDING_MODEL)
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        try:
+            _model = SentenceTransformer(EMBEDDING_MODEL)
+        except Exception as exc:
+            logger.warning("[Embedder] Model load failed — embeddings disabled: %s", exc)
+            return None
     return _model
 
 
@@ -91,11 +98,13 @@ def _chunk_text(text: str) -> list[str]:
 
 def embed_and_store(text: str, metadata: dict[str, Any]):
     """Chunk text, embed, and add to FAISS index."""
+    model = _get_model()
+    if model is None:
+        return
+
     chunks = _chunk_text(text)
     if not chunks:
         return
-
-    model = _get_model()
     index, meta = _get_index()
 
     vectors = model.encode(chunks, show_progress_bar=False, normalize_embeddings=True)
@@ -133,6 +142,9 @@ def embed_transactions_as_text():
 def search(query: str, top_k: int = 5) -> list[dict]:
     """Search FAISS for the top-k most relevant chunks."""
     model = _get_model()
+    if model is None:
+        return []
+
     index, meta = _get_index()
 
     if index.ntotal == 0:
