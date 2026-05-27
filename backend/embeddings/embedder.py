@@ -10,7 +10,6 @@ from typing import Any
 
 import faiss
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from backend.config import EMBEDDING_MODEL, FAISS_INDEX_DIR, CHUNK_SIZE, CHUNK_OVERLAP
 
@@ -20,12 +19,12 @@ FAISS_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_PATH = FAISS_INDEX_DIR / "index.faiss"
 META_PATH = FAISS_INDEX_DIR / "metadata.pkl"
 
-_model: SentenceTransformer | None = None
+_model = None
 _index: faiss.IndexFlatL2 | None = None
 _metadata: list[dict] = []
 
 
-def _get_model() -> SentenceTransformer | None:
+def _get_model():
     global _model
     import os
     if os.getenv("DISABLE_EMBEDDINGS", "").lower() in ("1", "true", "yes"):
@@ -33,6 +32,7 @@ def _get_model() -> SentenceTransformer | None:
     if _model is None:
         logger.info("[Embedder] Loading model: %s", EMBEDDING_MODEL)
         try:
+            from sentence_transformers import SentenceTransformer
             _model = SentenceTransformer(EMBEDDING_MODEL)
         except Exception as exc:
             logger.warning("[Embedder] Model load failed — embeddings disabled: %s", exc)
