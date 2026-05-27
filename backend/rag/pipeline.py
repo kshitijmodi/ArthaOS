@@ -113,6 +113,18 @@ def _sql_context(query: str) -> str:
                 for r in rows:
                     lines.append(f"  {r['date']} | {r['description']} | ₹{r['amount']} [{r['category']}]")
 
+        # Recent transactions for any follow-up or date-related questions
+        if not lines or any(w in q for w in ["when", "last", "recent", "date", "charged", "time", "latest"]):
+            rows = conn.execute(
+                """SELECT date, description, amount, category FROM transactions
+                   WHERE transaction_type='debit'
+                   ORDER BY date DESC LIMIT 20"""
+            ).fetchall()
+            if rows:
+                lines.append("Most recent transactions:")
+                for r in rows:
+                    lines.append(f"  {r['date']} | {r['description']} | ₹{r['amount']} [{r['category']}]")
+
     return "\n".join(lines)
 
 
