@@ -109,11 +109,9 @@ export default function Page() {
             <InvestmentsPanel />
           </div>
         )}
-        {activeView === "chat" && (
-          <div className="h-screen flex flex-col max-w-2xl mx-auto">
-            <QueryInterface />
-          </div>
-        )}
+        <div className={cn("h-screen flex flex-col max-w-2xl mx-auto", activeView !== "chat" && "hidden")}>
+          <QueryInterface />
+        </div>
         {activeView === "alerts" && (
           <div className="p-6 max-w-[900px] mx-auto">
             <div className="mb-6">
