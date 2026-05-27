@@ -42,3 +42,6 @@ coverage/
 .DS_Store
 Thumbs.db
 ~$*
+
+# SSH keys
+*.key
