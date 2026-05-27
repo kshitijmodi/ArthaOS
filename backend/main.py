@@ -94,6 +94,7 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     query: str
+    history: list[dict] = []
 
 class CategoryUpdateRequest(BaseModel):
     category: str
@@ -109,7 +110,7 @@ class SnoozeRequest(BaseModel):
 @app.post("/query")
 def query_endpoint(req: QueryRequest):
     from backend.rag.pipeline import query
-    result = query(req.query)
+    result = query(req.query, history=req.history or [])
     return {
         "answer": result.answer,
         "low_confidence": result.low_confidence,

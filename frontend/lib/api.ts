@@ -80,8 +80,8 @@ export const updateCategory = (id: number, category: string) =>
 
 export const getSummary = () => apiFetch<DashboardSummary>("/dashboard/summary");
 
-export const sendQuery = (query: string) =>
-  apiFetch<QueryResponse>("/query", { method: "POST", body: JSON.stringify({ query }) });
+export const sendQuery = (query: string, history: { role: string; content: string }[] = []) =>
+  apiFetch<QueryResponse>("/query", { method: "POST", body: JSON.stringify({ query, history }) });
 
 export async function sendFinanceCommand(args: string): Promise<QueryResponse> {
   console.debug("[api] sendFinanceCommand → POST /finance, args:", JSON.stringify(args));

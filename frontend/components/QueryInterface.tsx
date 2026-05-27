@@ -55,7 +55,9 @@ export default function QueryInterface() {
         if (args && !ARGS_RE.test(args)) throw new Error("Query contains unsupported characters.");
         res = await sendFinanceCommand(args);
       } else {
-        res = await sendQuery(s);
+        // Build conversation history from prior messages (last 10 turns max)
+        const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }));
+        res = await sendQuery(s, history);
       }
       setMessages(prev => [...prev, {
         id: seq++, role: "assistant",

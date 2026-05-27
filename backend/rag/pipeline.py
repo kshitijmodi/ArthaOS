@@ -120,7 +120,7 @@ def _sql_context(query: str) -> str:
 # Main query function
 # ---------------------------------------------------------------------------
 
-def query(user_query: str, top_k: int = 5) -> QueryResult:
+def query(user_query: str, top_k: int = 5, history: list[dict] | None = None) -> QueryResult:
     # 1. Structured DB context (primary source of truth)
     sql_ctx = _sql_context(user_query)
 
@@ -150,7 +150,7 @@ def query(user_query: str, top_k: int = 5) -> QueryResult:
     context = "\n\n".join(context_parts)
     prompt = f"Context:\n{context}\n\nQuestion: {user_query}\n\nAnswer:"
 
-    answer = complete(prompt, max_tokens=512, system=SYSTEM_PROMPT)
+    answer = complete(prompt, max_tokens=512, system=SYSTEM_PROMPT, history=history)
 
     return QueryResult(
         answer=answer,
