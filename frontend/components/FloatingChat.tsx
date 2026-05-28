@@ -10,40 +10,37 @@ export default function FloatingChat() {
 
   return (
     <>
-      {/* Panel */}
-      {open && (
-        <div className={cn(
-          "fixed bottom-20 right-5 z-50 flex flex-col rounded-2xl border border-border bg-surface shadow-2xl transition-all duration-200 overflow-hidden",
-          minimised ? "h-12 w-72" : "w-[380px] h-[520px]"
-        )}>
-          {/* Title bar */}
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-elevated shrink-0">
-            <div className="w-2 h-2 rounded-full bg-income" />
-            <span className="text-sm font-semibold text-tx flex-1">Ask ArthaOS</span>
-            <button
-              onClick={() => setMinimised(m => !m)}
-              className="p-1 text-tx-3 hover:text-tx-2 rounded-lg hover:bg-elevated transition-colors"
-              title={minimised ? "Expand" : "Minimise"}
-            >
-              <Minus size={13} />
-            </button>
-            <button
-              onClick={() => { setOpen(false); setMinimised(false); }}
-              className="p-1 text-tx-3 hover:text-expense rounded-lg hover:bg-elevated transition-colors"
-              title="Close"
-            >
-              <X size={13} />
-            </button>
-          </div>
-
-          {/* Chat body */}
-          {!minimised && (
-            <div className="flex-1 min-h-0">
-              <QueryInterface />
-            </div>
-          )}
+      {/* Panel — always mounted to preserve chat history; shown/hidden via CSS */}
+      <div className={cn(
+        "fixed bottom-20 right-5 z-50 flex flex-col rounded-2xl border border-border bg-surface shadow-2xl overflow-hidden transition-all duration-200",
+        minimised ? "h-12 w-72" : "w-[380px] h-[520px]",
+        !open && "hidden"
+      )}>
+        {/* Title bar */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-elevated shrink-0">
+          <div className="w-2 h-2 rounded-full bg-income" />
+          <span className="text-sm font-semibold text-tx flex-1">Ask ArthaOS</span>
+          <button
+            onClick={() => setMinimised(m => !m)}
+            className="p-1 text-tx-3 hover:text-tx-2 rounded-lg hover:bg-elevated transition-colors"
+            title={minimised ? "Expand" : "Minimise"}
+          >
+            <Minus size={13} />
+          </button>
+          <button
+            onClick={() => { setOpen(false); setMinimised(false); }}
+            className="p-1 text-tx-3 hover:text-expense rounded-lg hover:bg-elevated transition-colors"
+            title="Close"
+          >
+            <X size={13} />
+          </button>
         </div>
-      )}
+
+        {/* Chat body — always mounted, hidden only when minimised */}
+        <div className={cn("flex-1 min-h-0", minimised && "hidden")}>
+          <QueryInterface />
+        </div>
+      </div>
 
       {/* Floating trigger button */}
       <button
