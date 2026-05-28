@@ -41,18 +41,23 @@ function getMonthPills() {
   });
 }
 
-// Last 8 weeks as { label, offset }
+// Last 8 weeks as { label, offset } — label shows "Week of May 25" (Monday date)
 function getWeekPills() {
-  return [
-    { label: "This week", offset: 0 },
-    { label: "Last week", offset: 1 },
-    { label: "2W ago",    offset: 2 },
-    { label: "3W ago",    offset: 3 },
-    { label: "4W ago",    offset: 4 },
-    { label: "5W ago",    offset: 5 },
-    { label: "6W ago",    offset: 6 },
-    { label: "7W ago",    offset: 7 },
-  ];
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=Sun
+  // Monday of current week
+  const thisMonday = new Date(now);
+  thisMonday.setDate(now.getDate() - ((dayOfWeek + 6) % 7));
+  thisMonday.setHours(0, 0, 0, 0);
+
+  return Array.from({ length: 8 }, (_, offset) => {
+    const monday = new Date(thisMonday);
+    monday.setDate(thisMonday.getDate() - offset * 7);
+    const label = offset === 0
+      ? "This week"
+      : `Week of ${monday.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    return { label, offset };
+  });
 }
 
 interface Props {

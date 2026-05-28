@@ -47,8 +47,11 @@ export default function CategoryManager() {
     finally { setSaving(false); }
   };
 
-  const deleteCategory = async (id: number) => {
-    await apiFetch(`/categories/${id}`, { method: "DELETE" });
+  const deleteCategory = async (cat: Category) => {
+    if (cat.is_system === 1) {
+      if (!confirm(`"${cat.name}" is a built-in category. Transactions assigned to it will keep the label but the category won't appear in filters. Delete anyway?`)) return;
+    }
+    await apiFetch(`/categories/${cat.id}`, { method: "DELETE" });
     load();
   };
 
@@ -151,14 +154,13 @@ export default function CategoryManager() {
                   >
                     <Pencil size={13} />
                   </button>
-                  {cat.is_system === 0 && (
-                    <button
-                      onClick={() => deleteCategory(cat.id)}
-                      className="p-1.5 text-tx-3 hover:text-expense transition-colors rounded-lg"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => deleteCategory(cat)}
+                    className="p-1.5 text-tx-3 hover:text-expense transition-colors rounded-lg"
+                    title={cat.is_system ? "Delete system category" : "Delete"}
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               </div>
             )}
@@ -167,7 +169,7 @@ export default function CategoryManager() {
       </div>
 
       <p className="text-xs text-tx-3 mt-4">
-        System categories cannot be deleted. Keywords are used for automatic transaction matching.
+        Keywords are used for automatic transaction matching. Deleting a system category will ask for confirmation.
       </p>
     </section>
   );

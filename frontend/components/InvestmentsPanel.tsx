@@ -60,8 +60,16 @@ export default function InvestmentsPanel() {
   };
 
   const filteredHoldings = selectedBroker ? holdings.filter(h => h.broker === selectedBroker) : holdings;
-  const unrealizedGain = holdings.reduce((acc, h) => acc + (h.gain_loss ?? 0), 0);
+  const filteredRecentTxns = selectedBroker
+    ? (summary?.recent_transactions ?? []).filter(tx => tx.broker === selectedBroker)
+    : (summary?.recent_transactions ?? []);
+  const unrealizedGain = filteredHoldings.reduce((acc, h) => acc + (h.gain_loss ?? 0), 0);
   const gainPositive = unrealizedGain >= 0;
+
+  // Unique brokers present in data
+  const availableBrokers = Array.from(new Set([
+    ...(summary?.accounts ?? []).map(a => a.broker),
+  ]));
 
   if (loading) return (
     <div className="space-y-4">
@@ -97,6 +105,35 @@ export default function InvestmentsPanel() {
         </div>
       </div>
 
+      {/* Broker filter tabs */}
+      {availableBrokers.length > 1 && (
+        <div className="flex items-center gap-1.5 bg-elevated rounded-xl p-1 border border-border/50 w-fit">
+          <button
+            onClick={() => setSelectedBroker(null)}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+              selectedBroker === null ? "bg-surface text-tx shadow-sm" : "text-tx-2 hover:text-tx"
+            )}
+          >
+            All accounts
+          </button>
+          {availableBrokers.map(broker => (
+            <button
+              key={broker}
+              onClick={() => setSelectedBroker(selectedBroker === broker ? null : broker)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                selectedBroker === broker
+                  ? cn("bg-surface shadow-sm", BROKER_ACCENT[broker] ?? "text-tx")
+                  : "text-tx-2 hover:text-tx"
+              )}
+            >
+              {BROKER_LABELS[broker] ?? broker}
+            </button>
+          ))}
+        </div>
+      )}
+
       {uploadMsg && (
         <div className={cn(
           "rounded-xl px-4 py-3 text-sm border",
@@ -119,7 +156,13 @@ export default function InvestmentsPanel() {
           {/* KPI cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { label: "Portfolio Value", value: fmt(summary!.portfolio_value), color: "text-tx" },
+              {
+                label: selectedBroker ? `${BROKER_LABELS[selectedBroker] ?? selectedBroker} Value` : "Portfolio Value",
+                value: fmt(selectedBroker
+                  ? (summary!.accounts.find(a => a.broker === selectedBroker)?.total_value ?? 0)
+                  : summary!.portfolio_value),
+                color: "text-tx",
+              },
               { label: "Total Invested",  value: fmt(summary!.total_invested),  color: "text-tx" },
               {
                 label: "Unrealized G/L",
@@ -146,37 +189,37 @@ export default function InvestmentsPanel() {
             <div className="rounded-2xl border border-border bg-surface p-5">
               <div className="flex items-center gap-2 mb-4">
                 <PieChart size={14} className="text-savings" />
-                <h3 className="font-semibold text-tx text-sm">By Account</h3>
+                <h3 className="font-semibold text-tx text-sm">Portfolio allocation</h3>
               </div>
               <div className="space-y-3">
-                {summary!.accounts.map((acc, i) => {
-                  const pct = summary!.portfolio_value > 0 ? (acc.total_value / summary!.portfolio_value) * 100 : 0;
-                  return (
-                    <div key={i}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setSelectedBroker(selectedBroker === acc.broker ? null : acc.broker)}
-                            className={cn("text-xs font-semibold transition-colors hover:underline", BROKER_ACCENT[acc.broker] ?? "text-tx-2")}
-                          >
-                            {BROKER_LABELS[acc.broker] ?? acc.broker}
-                          </button>
-                          <span className="text-xs text-tx-3">{acc.positions} positions</span>
+                {summary!.accounts
+                  .filter(acc => !selectedBroker || acc.broker === selectedBroker)
+                  .map((acc, i) => {
+                    const pct = summary!.portfolio_value > 0 ? (acc.total_value / summary!.portfolio_value) * 100 : 0;
+                    return (
+                      <div key={i}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className={cn("text-xs font-semibold", BROKER_ACCENT[acc.broker] ?? "text-tx-2")}>
+                              {BROKER_LABELS[acc.broker] ?? acc.broker}
+                            </span>
+                            <span className="text-xs text-tx-3">{acc.account}</span>
+                            <span className="text-xs text-tx-3">· {acc.positions} positions</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-sm font-semibold text-tx">{fmt(acc.total_value)}</span>
+                            <span className="text-xs text-tx-3 ml-2">{pct.toFixed(1)}%</span>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <span className="text-sm font-semibold text-tx">{fmt(acc.total_value)}</span>
-                          <span className="text-xs text-tx-3 ml-2">{pct.toFixed(1)}%</span>
+                        <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
+                          <div
+                            className={cn("h-full rounded-full transition-all", BROKER_BAR[acc.broker] ?? "bg-accent")}
+                            style={{ width: `${pct}%` }}
+                          />
                         </div>
                       </div>
-                      <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
-                        <div
-                          className={cn("h-full rounded-full transition-all", BROKER_BAR[acc.broker] ?? "bg-accent")}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             </div>
           )}
@@ -192,12 +235,8 @@ export default function InvestmentsPanel() {
                       · {BROKER_LABELS[selectedBroker] ?? selectedBroker}
                     </span>
                   )}
+                  <span className="text-xs text-tx-3 ml-2">({filteredHoldings.length})</span>
                 </h3>
-                {selectedBroker && (
-                  <button onClick={() => setSelectedBroker(null)} className="text-xs text-tx-3 hover:text-tx-2">
-                    Show all
-                  </button>
-                )}
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -235,11 +274,11 @@ export default function InvestmentsPanel() {
           )}
 
           {/* Recent activity */}
-          {summary!.recent_transactions.length > 0 && (
+          {filteredRecentTxns.length > 0 && (
             <div className="rounded-2xl border border-border bg-surface p-5">
               <h3 className="font-semibold text-tx text-sm mb-4">Recent Activity</h3>
               <div className="divide-y divide-border/40">
-                {summary!.recent_transactions.map(tx => (
+                {filteredRecentTxns.map(tx => (
                   <div key={tx.id} className="flex items-center justify-between py-3">
                     <div className="flex items-center gap-3">
                       <span className={cn("text-xs font-semibold uppercase tracking-wide w-20 shrink-0", TX_COLORS[tx.transaction_type] ?? "text-tx-3")}>

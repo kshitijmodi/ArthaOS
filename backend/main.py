@@ -677,8 +677,6 @@ def delete_category(cat_id: int):
         row = conn.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Category not found")
-        if row["is_system"]:
-            raise HTTPException(status_code=400, detail="Cannot delete system categories")
         conn.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
     return {"status": "deleted"}
 

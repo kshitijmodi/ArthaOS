@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useEffect, useState } from "react";
 import {
-  ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown,
+  ArrowUpRight, ArrowDownRight,
   Building2, CreditCard, BarChart3, PiggyBank, Scale,
 } from "lucide-react";
 import { Transaction, getAccountsSummary, AccountsSummary } from "@/lib/api";
@@ -31,44 +31,55 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-function KPICard({
-  label, value, sub, icon, iconBg, border, accent, sparkData, sparkColor, onClick, isLoading,
+function Card({
+  label, value, sub, icon, iconBg, border, accent,
+  sparkData, sparkColor, onClick, loading, badge,
 }: {
   label: string; value: string; sub: string;
   icon: React.ReactNode; iconBg: string; border: string; accent: string;
   sparkData?: number[]; sparkColor?: string;
-  onClick?: () => void; isLoading?: boolean;
+  onClick?: () => void; loading?: boolean; badge?: React.ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
       className={cn(
         "group rounded-2xl border bg-surface p-4 text-left transition-all duration-200",
-        "hover:shadow-xl hover:-translate-y-0.5",
+        "hover:shadow-lg hover:-translate-y-0.5",
         border
       )}
     >
       <div className="flex items-start justify-between mb-2.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-tx-2">{label}</span>
-        <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-tx-2 truncate">{label}</span>
+          {badge}
+        </div>
+        <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ml-1", iconBg)}>
           {icon}
         </span>
       </div>
-      {isLoading ? (
-        <div className="h-7 w-24 bg-elevated rounded animate-pulse mb-1" />
+      {loading ? (
+        <div className="h-6 w-20 bg-elevated rounded animate-pulse mb-1" />
       ) : (
         <p className="text-xl font-bold text-tx tracking-tight leading-none mb-1">{value}</p>
       )}
       <p className={cn("text-[11px] mb-2", accent)}>{sub}</p>
       {sparkData && sparkColor && (
         <div className="flex items-end justify-between">
-          <p className="text-[10px] text-tx-3 opacity-0 group-hover:opacity-100 transition-opacity">
-            Tap to explore →
-          </p>
+          <p className="text-[10px] text-tx-3 opacity-0 group-hover:opacity-100 transition-opacity">Tap →</p>
           <Sparkline data={sparkData} color={sparkColor} />
         </div>
       )}
     </button>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[11px] font-semibold uppercase tracking-widest text-tx-3">{children}</span>
+      <div className="flex-1 h-px bg-border/50" />
+    </div>
   );
 }
 
@@ -87,12 +98,13 @@ export default function KPICards({ transactions, allTxns, onDrillDown }: Props) 
   const m = useMemo(() => {
     const credits = transactions.filter(t => t.transaction_type === "credit");
     const debits  = transactions.filter(t => t.transaction_type === "debit");
-    const income   = credits.reduce((s, t) => s + t.amount, 0);
-    const expenses = debits.reduce((s, t)  => s + t.amount, 0);
-    return { credits, debits, income, expenses };
+    return {
+      credits, debits,
+      income:   credits.reduce((s, t) => s + t.amount, 0),
+      expenses: debits.reduce((s, t)  => s + t.amount, 0),
+    };
   }, [transactions]);
 
-  // Weekly sparklines from allTxns
   const weekly = useMemo(() => {
     const now = new Date();
     return Array.from({ length: 5 }, (_, i) => {
@@ -106,109 +118,81 @@ export default function KPICards({ transactions, allTxns, onDrillDown }: Props) 
     }).reverse();
   }, [allTxns]);
 
-  const expSparkline = weekly.map(w => w.expenses);
-  const incSparkline = weekly.map(w => w.income);
-
   const nw = accounts?.net_worth ?? 0;
-  const nwPositive = nw >= 0;
+  const ccHigh = (accounts?.cc_balance ?? 0) > 5000;
+
+  const LiveBadge = () => (
+    <span className="flex items-center gap-0.5 text-[9px] text-income font-semibold shrink-0">
+      <span className="w-1 h-1 rounded-full bg-income inline-block" />live
+    </span>
+  );
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-      {/* Income */}
-      <KPICard
-        label="Income"
-        value={formatCurrency(m.income)}
-        sub={`${m.credits.length} credit${m.credits.length !== 1 ? "s" : ""}`}
-        icon={<ArrowUpRight size={14} className="text-income" />}
-        iconBg="bg-income/10"
-        border="border-income/20 hover:border-income/40"
-        accent="text-income"
-        sparkData={incSparkline}
-        sparkColor="var(--color-income, #22c55e)"
-        onClick={() => onDrillDown("Income", m.credits)}
-      />
+    <div className="space-y-3">
+      {/* Row 1 — period-filtered */}
+      <SectionLabel>This period</SectionLabel>
+      <div className="grid grid-cols-2 gap-3">
+        <Card
+          label="Income" value={formatCurrency(m.income)}
+          sub={`${m.credits.length} credit${m.credits.length !== 1 ? "s" : ""}`}
+          icon={<ArrowUpRight size={14} className="text-income" />}
+          iconBg="bg-income/10" border="border-income/20 hover:border-income/40" accent="text-income"
+          sparkData={weekly.map(w => w.income)} sparkColor="var(--color-income, #22c55e)"
+          onClick={() => onDrillDown("Income", m.credits)}
+        />
+        <Card
+          label="Expenses" value={formatCurrency(m.expenses)}
+          sub={`${m.debits.length} debit${m.debits.length !== 1 ? "s" : ""}`}
+          icon={<ArrowDownRight size={14} className="text-expense" />}
+          iconBg="bg-expense/10" border="border-expense/20 hover:border-expense/40" accent="text-expense"
+          sparkData={weekly.map(w => w.expenses)} sparkColor="var(--color-expense, #ef4444)"
+          onClick={() => onDrillDown("Expenses", m.debits)}
+        />
+      </div>
 
-      {/* Expenses */}
-      <KPICard
-        label="Expenses"
-        value={formatCurrency(m.expenses)}
-        sub={`${m.debits.length} debit${m.debits.length !== 1 ? "s" : ""}`}
-        icon={<ArrowDownRight size={14} className="text-expense" />}
-        iconBg="bg-expense/10"
-        border="border-expense/20 hover:border-expense/40"
-        accent="text-expense"
-        sparkData={expSparkline}
-        sparkColor="var(--color-expense, #ef4444)"
-        onClick={() => onDrillDown("Expenses", m.debits)}
-      />
-
-      {/* Bank Balance */}
-      <KPICard
-        label="Bank Balance"
-        value={accounts ? formatCurrency(accounts.bank_balance) : "—"}
-        sub="checking + savings"
-        icon={<Building2 size={14} className="text-accent" />}
-        iconBg="bg-accent/10"
-        border="border-accent/20 hover:border-accent/40"
-        accent="text-accent"
-        isLoading={acctLoading}
-        onClick={() => {}}
-      />
-
-      {/* CC Balance */}
-      <KPICard
-        label="CC Balance"
-        value={accounts ? formatCurrency(accounts.cc_balance) : "—"}
-        sub="total owed"
-        icon={<CreditCard size={14} className={accounts && accounts.cc_balance > 5000 ? "text-expense" : "text-warn"} />}
-        iconBg={accounts && accounts.cc_balance > 5000 ? "bg-expense/10" : "bg-warn/10"}
-        border={accounts && accounts.cc_balance > 5000 ? "border-expense/20 hover:border-expense/40" : "border-warn/20 hover:border-warn/40"}
-        accent={accounts && accounts.cc_balance > 5000 ? "text-expense" : "text-warn"}
-        isLoading={acctLoading}
-        onClick={() => {}}
-      />
-
-      {/* 401K */}
-      <KPICard
-        label="401K (Fidelity)"
-        value={accounts ? formatCurrency(accounts.portfolio_401k) : "—"}
-        sub="retirement"
-        icon={<PiggyBank size={14} className="text-income" />}
-        iconBg="bg-income/10"
-        border="border-income/20 hover:border-income/40"
-        accent="text-income"
-        isLoading={acctLoading}
-        onClick={() => {}}
-      />
-
-      {/* Stocks */}
-      <KPICard
-        label="Stocks"
-        value={accounts ? formatCurrency(accounts.portfolio_stocks) : "—"}
-        sub="Robinhood · Schwab"
-        icon={<BarChart3 size={14} className="text-accent" />}
-        iconBg="bg-accent/10"
-        border="border-accent/20 hover:border-accent/40"
-        accent="text-accent"
-        isLoading={acctLoading}
-        onClick={() => {}}
-      />
-
-      {/* Net Worth */}
-      <KPICard
-        label="Net Worth"
-        value={accounts ? formatCurrency(Math.abs(nw)) : "—"}
-        sub={nwPositive ? "bank + investments" : "net negative"}
-        icon={nwPositive
-          ? <TrendingUp size={14} className="text-income" />
-          : <TrendingDown size={14} className="text-expense" />
-        }
-        iconBg={nwPositive ? "bg-income/10" : "bg-expense/10"}
-        border={nwPositive ? "border-income/20 hover:border-income/40" : "border-expense/20 hover:border-expense/40"}
-        accent={nwPositive ? "text-income" : "text-expense"}
-        isLoading={acctLoading}
-        onClick={() => {}}
-      />
+      {/* Row 2 — always-current snapshot */}
+      <SectionLabel>Current balances &amp; portfolio</SectionLabel>
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <Card
+          label="Bank Balance" value={accounts ? formatCurrency(accounts.bank_balance) : "—"}
+          sub="checking + savings"
+          icon={<Building2 size={14} className="text-accent" />}
+          iconBg="bg-accent/10" border="border-accent/20 hover:border-accent/40" accent="text-accent"
+          loading={acctLoading} badge={<LiveBadge />}
+        />
+        <Card
+          label="CC Balance" value={accounts ? formatCurrency(accounts.cc_balance) : "—"}
+          sub="total owed"
+          icon={<CreditCard size={14} className={ccHigh ? "text-expense" : "text-warn"} />}
+          iconBg={ccHigh ? "bg-expense/10" : "bg-warn/10"}
+          border={ccHigh ? "border-expense/20 hover:border-expense/40" : "border-warn/20 hover:border-warn/40"}
+          accent={ccHigh ? "text-expense" : "text-warn"}
+          loading={acctLoading} badge={<LiveBadge />}
+        />
+        <Card
+          label="401K · Fidelity" value={accounts ? formatCurrency(accounts.portfolio_401k) : "—"}
+          sub="retirement"
+          icon={<PiggyBank size={14} className="text-income" />}
+          iconBg="bg-income/10" border="border-income/20 hover:border-income/40" accent="text-income"
+          loading={acctLoading}
+        />
+        <Card
+          label="Stocks" value={accounts ? formatCurrency(accounts.portfolio_stocks) : "—"}
+          sub="Robinhood · Schwab"
+          icon={<BarChart3 size={14} className="text-savings" />}
+          iconBg="bg-savings/10" border="border-savings/20 hover:border-savings/40" accent="text-savings"
+          loading={acctLoading}
+        />
+        <Card
+          label="Net Worth" value={accounts ? formatCurrency(Math.abs(nw)) : "—"}
+          sub={nw >= 0 ? "assets – liabilities" : "net negative"}
+          icon={<Scale size={14} className={nw >= 0 ? "text-income" : "text-expense"} />}
+          iconBg={nw >= 0 ? "bg-income/10" : "bg-expense/10"}
+          border={nw >= 0 ? "border-income/20 hover:border-income/40" : "border-expense/20 hover:border-expense/40"}
+          accent={nw >= 0 ? "text-income" : "text-expense"}
+          loading={acctLoading}
+        />
+      </div>
     </div>
   );
 }
