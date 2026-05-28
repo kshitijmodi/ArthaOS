@@ -22,6 +22,9 @@ export interface Transaction {
   category_source: "auto" | "user";
   source_file: string;
   confidence_score: number;
+  starred: number;
+  institution: string | null;
+  account_name: string | null;
   created_at: string;
 }
 
@@ -66,11 +69,15 @@ export const snoozeAlert = (id: number, days = 3) =>
 
 export const getTransactions = (params: {
   page?: number; page_size?: number; category?: string; sort_by?: string; sort_dir?: string;
+  starred?: boolean; charges_only?: boolean;
 }) => {
   const q = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
   return apiFetch<{ total: number; transactions: Transaction[] }>(`/transactions?${q}`);
 };
+
+export const starTransaction = (id: number) =>
+  apiFetch<{ starred: boolean }>(`/transactions/${id}/star`, { method: "PATCH" });
 
 export const updateCategory = (id: number, category: string) =>
   apiFetch(`/transactions/${id}/category`, {
@@ -168,3 +175,15 @@ export const updateGoal = (id: number, data: Partial<{
 
 export const deleteGoal = (id: number) =>
   apiFetch(`/goals/${id}`, { method: "DELETE" });
+
+// Accounts summary (bank balance, CC, investments, net worth)
+export interface AccountsSummary {
+  bank_balance: number;
+  cc_balance: number;
+  portfolio_401k: number;
+  portfolio_stocks: number;
+  net_worth: number;
+}
+
+export const getAccountsSummary = () =>
+  apiFetch<AccountsSummary>("/dashboard/accounts-summary");

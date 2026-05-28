@@ -162,6 +162,8 @@ def get_transactions(
     transaction_type: Optional[str] = None,
     sort_by: str = "date",
     sort_dir: str = "desc",
+    starred: Optional[bool] = None,
+    charges_only: Optional[bool] = None,
 ):
     allowed_sort = {"date", "amount", "category", "description"}
     if sort_by not in allowed_sort:
@@ -176,6 +178,10 @@ def get_transactions(
     if transaction_type:
         filters.append("transaction_type = ?")
         params.append(transaction_type)
+    if starred is True:
+        filters.append("starred = 1")
+    if charges_only is True:
+        filters.append("category = 'Fees & Interest'")
 
     where = " AND ".join(filters)
     offset = (page - 1) * page_size
@@ -193,6 +199,17 @@ def get_transactions(
         "page_size": page_size,
         "transactions": [dict(r) for r in rows],
     }
+
+
+@app.patch("/transactions/{tx_id}/star")
+def toggle_star(tx_id: int):
+    with db() as conn:
+        row = conn.execute("SELECT starred FROM transactions WHERE id = ?", (tx_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        new_val = 0 if row["starred"] else 1
+        conn.execute("UPDATE transactions SET starred = ? WHERE id = ?", (new_val, tx_id))
+    return {"starred": bool(new_val)}
 
 
 @app.patch("/transactions/{tx_id}/category")
@@ -291,6 +308,61 @@ def dashboard_summary():
         "transaction_count": tx_count,
         "upcoming_charges": [dict(r) for r in upcoming],
         "unread_alerts": unread_alerts,
+    }
+
+
+@app.get("/dashboard/accounts-summary")
+def accounts_summary():
+    """Bank balance, CC balance, 401K (Fidelity), Stocks (Robinhood/Schwab), net worth."""
+    with db() as conn:
+        # Bank balance = sum of available balance for checking/savings accounts
+        bank_row = conn.execute(
+            """SELECT COALESCE(SUM(COALESCE(balance_available, balance_ledger, 0)), 0) as total
+               FROM teller_accounts
+               WHERE lower(type) IN ('depository','checking','savings')"""
+        ).fetchone()
+        bank_balance = round(bank_row["total"], 2)
+
+        # CC balance = sum of ledger balance for credit accounts (positive = owed)
+        cc_row = conn.execute(
+            """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
+               FROM teller_accounts
+               WHERE lower(type) IN ('credit','credit_card')"""
+        ).fetchone()
+        cc_balance = round(cc_row["total"], 2)
+
+        # 401K = Fidelity holdings value
+        fidelity_row = conn.execute(
+            """SELECT COALESCE(SUM(h.total_value), 0) as total
+               FROM investment_holdings h
+               WHERE h.as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               AND lower(h.broker) LIKE '%fidelity%'"""
+        ).fetchone()
+        portfolio_401k = round(fidelity_row["total"], 2)
+
+        # Stocks = Robinhood + Schwab holdings value
+        stocks_row = conn.execute(
+            """SELECT COALESCE(SUM(h.total_value), 0) as total
+               FROM investment_holdings h
+               WHERE h.as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               AND (lower(h.broker) LIKE '%robinhood%' OR lower(h.broker) LIKE '%schwab%')"""
+        ).fetchone()
+        portfolio_stocks = round(stocks_row["total"], 2)
+
+    net_worth = round(bank_balance + portfolio_401k + portfolio_stocks - cc_balance, 2)
+
+    return {
+        "bank_balance": bank_balance,
+        "cc_balance": cc_balance,
+        "portfolio_401k": portfolio_401k,
+        "portfolio_stocks": portfolio_stocks,
+        "net_worth": net_worth,
     }
 
 

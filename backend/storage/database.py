@@ -41,6 +41,9 @@ def init_db():
             source_file     TEXT NOT NULL,
             raw_text        TEXT,
             confidence_score REAL DEFAULT 1.0,
+            starred         INTEGER NOT NULL DEFAULT 0,
+            institution     TEXT,
+            account_name    TEXT,
             created_at      TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(date, description, amount, source_file)
         );
@@ -232,6 +235,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_inv_hld_broker ON investment_holdings(broker);
         """)
     _seed_categories()
+    _run_migrations()
     print(f"[DB] Initialised at {DB_PATH}")
 
 
@@ -268,21 +272,37 @@ def is_duplicate_transaction(
 
 
 DEFAULT_CATEGORIES = [
-    ("Groceries",     "big bazaar,dmart,reliance fresh,zepto,blinkit,grofer,swiggy instamart,bigbasket,more supermart,spencer,lulu", 1),
-    ("Dining",        "swiggy,zomato,domino,pizza hut,mcdonald,kfc,burger king,starbucks,subway,haldiram,restaurant,eatery,bistro", 1),
-    ("Travel",        "uber,ola,rapido,metro,irctc,makemytrip,redbus,yatra,cleartrip,indigo,air india,spicejet,petrol,fuel", 1),
-    ("Utilities",     "electricity,bescom,msedcl,tata power,water board,gas bill,pseg,att,honest networks,airtel broadband", 1),
-    ("Subscriptions", "jio,airtel,vodafone,netflix,amazon prime,hotstar,spotify,youtube premium,zee5,sony liv,voot,apple", 1),
-    ("Insurance",     "lic,hdfc life,icici pru,bajaj allianz,star health,insurance,amfam,progressive,assurant", 1),
-    ("EMIs",          "emi,loan repay,bajaj fin,home loan,car loan,personal loan,emi debit", 1),
-    ("Rent",          "rent,house rent,rental,pg rent,accommodation,lease", 1),
-    ("Shopping",      "amazon,flipkart,myntra,ajio,nykaa,meesho,snapdeal,croma,vijay sales,reliance digital,walmart,target,costco", 1),
-    ("Healthcare",    "apollo,fortis,medplus,1mg,pharmeasy,netmeds,hospital,clinic,pharmacy,diagnostic,cvs,walgreens", 1),
-    ("Education",     "udemy,coursera,byju,unacademy,school fee,college fee,tuition,exam fee", 1),
-    ("Investments",   "robinhood,schwab,fidelity,vanguard,axis direct,zerodha,groww,mutual fund,stock,etf,brokerage", 1),
-    ("Income",        "salary,neft cr,rtgs cr,credit salary,payroll,stipend,paylocity,direct deposit", 1),
-    ("Miscellaneous", "", 1),
+    ("Groceries",       "big bazaar,dmart,reliance fresh,zepto,blinkit,grofer,swiggy instamart,bigbasket,more supermart,spencer,lulu", 1),
+    ("Dining",          "swiggy,zomato,domino,pizza hut,mcdonald,kfc,burger king,starbucks,subway,haldiram,restaurant,eatery,bistro", 1),
+    ("Travel",          "uber,ola,rapido,metro,irctc,makemytrip,redbus,yatra,cleartrip,indigo,air india,spicejet,petrol,fuel", 1),
+    ("Utilities",       "electricity,bescom,msedcl,tata power,water board,gas bill,pseg,att,honest networks,airtel broadband", 1),
+    ("Subscriptions",   "jio,airtel,vodafone,netflix,amazon prime,hotstar,spotify,youtube premium,zee5,sony liv,voot,apple", 1),
+    ("Insurance",       "lic,hdfc life,icici pru,bajaj allianz,star health,insurance,amfam,progressive,assurant", 1),
+    ("EMIs",            "emi,loan repay,bajaj fin,home loan,car loan,personal loan,emi debit", 1),
+    ("Rent",            "rent,house rent,rental,pg rent,accommodation,lease", 1),
+    ("Shopping",        "amazon,flipkart,myntra,ajio,nykaa,meesho,snapdeal,croma,vijay sales,reliance digital,walmart,target,costco", 1),
+    ("Healthcare",      "apollo,fortis,medplus,1mg,pharmeasy,netmeds,hospital,clinic,pharmacy,diagnostic,cvs,walgreens", 1),
+    ("Education",       "udemy,coursera,byju,unacademy,school fee,college fee,tuition,exam fee", 1),
+    ("Investments",     "robinhood,schwab,fidelity,vanguard,axis direct,zerodha,groww,mutual fund,stock,etf,brokerage", 1),
+    ("Income",          "salary,neft cr,rtgs cr,credit salary,payroll,stipend,paylocity,direct deposit", 1),
+    ("Fees & Interest", "late fee,interest charge,finance charge,foreign transaction,forex fee,annual fee,overdraft,penalty,service charge", 1),
+    ("Miscellaneous",   "", 1),
 ]
+
+
+def _run_migrations():
+    """ALTER TABLE migrations for existing databases — safe to run multiple times."""
+    migrations = [
+        "ALTER TABLE transactions ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE transactions ADD COLUMN institution TEXT",
+        "ALTER TABLE transactions ADD COLUMN account_name TEXT",
+    ]
+    with db() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(sql)
+            except Exception:
+                pass  # column already exists
 
 
 def _seed_categories():

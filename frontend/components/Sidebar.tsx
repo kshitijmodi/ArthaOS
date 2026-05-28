@@ -2,13 +2,13 @@
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/ThemeProvider";
 import {
-  LayoutDashboard, ArrowLeftRight, BarChart3, TrendingUp,
-  MessageCircle, Bell, Settings, ChevronLeft, ChevronRight,
+  LayoutDashboard, ArrowLeftRight, TrendingUp,
+  Bell, Settings, ChevronLeft, ChevronRight,
   Sun, Moon, Zap, Target,
 } from "lucide-react";
 import { useState } from "react";
 
-export type View = "dashboard" | "transactions" | "analytics" | "investments" | "chat" | "alerts" | "goals" | "settings";
+export type View = "dashboard" | "transactions" | "investments" | "alerts" | "goals" | "settings";
 
 interface NavItem { id: View; label: string; icon: React.ReactNode; badge?: number; }
 interface Props { activeView: View; onNavigate: (v: View) => void; alertCount?: number; }
@@ -20,9 +20,7 @@ export default function Sidebar({ activeView, onNavigate, alertCount = 0 }: Prop
   const navItems: NavItem[] = [
     { id: "dashboard",    label: "Dashboard",    icon: <LayoutDashboard size={18} /> },
     { id: "transactions", label: "Transactions", icon: <ArrowLeftRight size={18} /> },
-    { id: "analytics",   label: "Analytics",    icon: <BarChart3 size={18} /> },
     { id: "investments",  label: "Investments",  icon: <TrendingUp size={18} /> },
-    { id: "chat",         label: "AI Chat",      icon: <MessageCircle size={18} /> },
     { id: "alerts",       label: "Alerts",       icon: <Bell size={18} />, badge: alertCount },
     { id: "goals",        label: "Goals",        icon: <Target size={18} /> },
   ];

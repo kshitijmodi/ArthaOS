@@ -3,7 +3,6 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import Sidebar, { View } from "@/components/Sidebar";
 import FilterBar, { FilterState, defaultFilters } from "@/components/FilterBar";
 import KPICards from "@/components/KPICards";
-import CashFlowChart from "@/components/CashFlowChart";
 import CategoryDonut from "@/components/CategoryDonut";
 import DrillDownModal from "@/components/DrillDownModal";
 import QueryInterface from "@/components/QueryInterface";
@@ -12,7 +11,6 @@ import AnalyticsPanel from "@/components/AnalyticsPanel";
 import AlertsPanel from "@/components/AlertsPanel";
 import GoalsPanel from "@/components/GoalsPanel";
 import GoalStrip from "@/components/GoalStrip";
-import BurnRateBar from "@/components/BurnRateBar";
 import UpcomingCharges from "@/components/UpcomingCharges";
 import InvestmentsPanel from "@/components/InvestmentsPanel";
 import InsightsPanel from "@/components/InsightsPanel";
@@ -21,23 +19,27 @@ import CategoryManager from "@/components/CategoryManager";
 import TellerConnect from "@/components/TellerConnect";
 import { getTransactions, Transaction } from "@/lib/api";
 import { formatCurrency, cn } from "@/lib/utils";
+import { MessageCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 function applyFilters(txns: Transaction[], f: FilterState): Transaction[] {
-  const now = new Date();
   return txns.filter(t => {
     const date = new Date(t.date);
+    const now = new Date();
 
-    if (f.period === "day") {
-      const cut = new Date(now); cut.setHours(0, 0, 0, 0);
-      if (date < cut) return false;
-    } else if (f.period === "week") {
-      const cut = new Date(now); cut.setDate(now.getDate() - 7);
-      if (date < cut) return false;
-    } else if (f.period === "month") {
-      if (date.getMonth() !== now.getMonth() || date.getFullYear() !== now.getFullYear()) return false;
-    } else if (f.period === "year") {
-      if (date.getFullYear() !== now.getFullYear()) return false;
-    } else if (f.period === "custom") {
+    if (f.mode === "monthly") {
+      // selectedMonth is "YYYY-MM"
+      const [y, m] = f.selectedMonth.split("-").map(Number);
+      if (date.getFullYear() !== y || date.getMonth() + 1 !== m) return false;
+    } else if (f.mode === "weekly") {
+      // weekOffset: 0 = this week (Mon–Sun), 1 = last week, etc.
+      const dayOfWeek = now.getDay(); // 0=Sun
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7) - f.weekOffset * 7);
+      monday.setHours(0, 0, 0, 0);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 7);
+      if (date < monday || date >= sunday) return false;
+    } else if (f.mode === "custom") {
       if (f.dateFrom && t.date < f.dateFrom) return false;
       if (f.dateTo   && t.date > f.dateTo)   return false;
     }
@@ -95,18 +97,9 @@ export default function Page() {
           <div className="p-6 max-w-[1200px] mx-auto">
             <div className="mb-6">
               <h1 className="text-xl font-bold text-tx">Transactions</h1>
-              <p className="text-sm text-tx-2 mt-1">Full history with search and category editing</p>
+              <p className="text-sm text-tx-2 mt-1">Full history with search, star, and category editing</p>
             </div>
             <TransactionTable />
-          </div>
-        )}
-        {activeView === "analytics" && (
-          <div className="p-6 max-w-[1200px] mx-auto">
-            <div className="mb-6">
-              <h1 className="text-xl font-bold text-tx">Analytics</h1>
-              <p className="text-sm text-tx-2 mt-1">Monthly trends, category breakdown and comparisons</p>
-            </div>
-            <AnalyticsPanel />
           </div>
         )}
         {activeView === "investments" && (
@@ -118,9 +111,6 @@ export default function Page() {
             <InvestmentsPanel />
           </div>
         )}
-        <div className={cn("h-screen flex flex-col max-w-2xl mx-auto", activeView !== "chat" && "hidden")}>
-          <QueryInterface />
-        </div>
         {activeView === "alerts" && (
           <div className="p-6 max-w-[900px] mx-auto">
             <div className="mb-6">
@@ -180,6 +170,7 @@ function DashboardView({
   loading, maxAmount, onDrillDown, onNavigate,
 }: DashboardProps) {
   const recentTxns = filteredTxns.slice(0, 8);
+  const [chatOpen, setChatOpen] = useState(false);
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
@@ -203,19 +194,19 @@ function DashboardView({
 
       <KPICards transactions={filteredTxns} allTxns={allTxns} onDrillDown={onDrillDown} />
 
-      <BurnRateBar allTxns={allTxns} />
-
-      {/* Charts */}
+      {/* Charts — inline analytics */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-        <div className="lg:col-span-3 bg-surface border border-border rounded-2xl p-5">
-          <h2 className="font-semibold text-tx">Cash Flow</h2>
-          <p className="text-xs text-tx-2 mb-5 mt-0.5">Income vs Expenses · last 6 months</p>
-          <CashFlowChart transactions={allTxns} />
-        </div>
+        {/* Category Donut */}
         <div className="lg:col-span-2 bg-surface border border-border rounded-2xl p-5">
           <h2 className="font-semibold text-tx">Spending by Category</h2>
           <p className="text-xs text-tx-2 mb-5 mt-0.5">Click any segment to drill down</p>
           <CategoryDonut transactions={filteredTxns} onDrillDown={onDrillDown} />
+        </div>
+        {/* Monthly trend inline */}
+        <div className="lg:col-span-3 bg-surface border border-border rounded-2xl p-5">
+          <h2 className="font-semibold text-tx">Monthly Trends</h2>
+          <p className="text-xs text-tx-2 mb-4 mt-0.5">Category breakdown · last 12 months</p>
+          <AnalyticsPanel compact />
         </div>
       </div>
 
@@ -269,6 +260,9 @@ function DashboardView({
                     <span className="text-xs text-tx-3">
                       {new Date(t.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </span>
+                    {t.institution && (
+                      <span className="text-[10px] text-tx-3">{t.institution}</span>
+                    )}
                     {t.category && (
                       <span className="text-[10px] bg-elevated text-tx-2 px-1.5 py-0.5 rounded-full border border-border/50">
                         {t.category}
@@ -290,6 +284,26 @@ function DashboardView({
 
       {/* Upcoming Charges */}
       <UpcomingCharges allTxns={allTxns} />
+
+      {/* Inline Quick-Ask Chat */}
+      <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+        <button
+          onClick={() => setChatOpen(o => !o)}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-elevated transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <MessageCircle size={14} className="text-accent" />
+            <span className="font-semibold text-tx text-sm">Ask about your finances</span>
+            <span className="text-xs text-tx-3">— AI-powered Q&A</span>
+          </div>
+          {chatOpen ? <ChevronUp size={14} className="text-tx-3" /> : <ChevronDown size={14} className="text-tx-3" />}
+        </button>
+        {chatOpen && (
+          <div className="border-t border-border" style={{ height: "420px" }}>
+            <QueryInterface />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

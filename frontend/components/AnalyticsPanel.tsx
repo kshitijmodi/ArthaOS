@@ -28,7 +28,7 @@ function CurrencyTooltip({ active, payload, label }: any) {
   );
 }
 
-export default function AnalyticsPanel() {
+export default function AnalyticsPanel({ compact }: { compact?: boolean }) {
   const [trend, setTrend] = useState<any[]>([]);
   const [breakdown, setBreakdown] = useState<any[]>([]);
   const [comparison, setComparison] = useState<any[]>([]);
@@ -47,6 +47,28 @@ export default function AnalyticsPanel() {
   }, []);
 
   if (loading) return <AnalyticsSkeleton />;
+
+  // Compact mode: just show the monthly trend chart (used inline on dashboard)
+  if (compact) {
+    return trend.length === 0 ? <EmptyState /> : (
+      <ResponsiveContainer width="100%" height={200}>
+        <AreaChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id="trendGradC" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis dataKey="month" tick={{ fill: "rgb(var(--c-text2))", fontSize: 10 }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fill: "rgb(var(--c-text2))", fontSize: 10 }} axisLine={false} tickLine={false}
+            tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
+          <Tooltip content={<CurrencyTooltip />} />
+          <Area type="monotone" dataKey="total" name="Spend"
+            stroke="#3b82f6" fill="url(#trendGradC)" strokeWidth={2} dot={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    );
+  }
 
   return (
     <section className="space-y-6">

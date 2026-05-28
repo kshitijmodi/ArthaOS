@@ -32,7 +32,7 @@ export function formatDateShort(dateStr: string): string {
 export const CATEGORIES = [
   "Groceries", "Dining", "Travel", "Utilities", "Subscriptions",
   "Insurance", "EMIs", "Rent", "Shopping", "Healthcare", "Education",
-  "Income", "Miscellaneous",
+  "Investments", "Income", "Fees & Interest", "Miscellaneous",
 ] as const;
 
 export const SEVERITY_COLORS: Record<string, string> = {

@@ -17,7 +17,7 @@ TELLER_TX_TYPE_MAP = {
 }
 
 
-def _upsert_transaction(conn, tx: dict, institution: str):
+def _upsert_transaction(conn, tx: dict, institution: str, account_name: str = ""):
     """
     Insert a Teller transaction.
     Skips if already stored by Teller ID (same-source dedup)
@@ -42,9 +42,9 @@ def _upsert_transaction(conn, tx: dict, institution: str):
     conn.execute(
         """INSERT INTO transactions
            (date, description, amount, currency, transaction_type, category,
-            category_source, source_file, confidence_score)
-           VALUES (?, ?, ?, ?, ?, ?, 'auto', ?, 0.85)""",
-        (date, description, amount, "USD", tx_type, category, source_file),
+            category_source, source_file, confidence_score, institution, account_name)
+           VALUES (?, ?, ?, ?, ?, ?, 'auto', ?, 0.85, ?, ?)""",
+        (date, description, amount, "USD", tx_type, category, source_file, institution, account_name),
     )
     return True
 
@@ -98,8 +98,9 @@ def sync_enrollment(enrollment_id: str, access_token: str, institution_name: str
             # Pull transactions
             try:
                 txns = get_transactions(access_token, account_id)
+                acc_display = account.get("name", "")
                 for tx in txns:
-                    if _upsert_transaction(conn, tx, institution_name):
+                    if _upsert_transaction(conn, tx, institution_name, acc_display):
                         new_txns += 1
             except Exception as exc:
                 logger.warning("[TellerSync] Transaction fetch failed for %s: %s", account_id, exc)
