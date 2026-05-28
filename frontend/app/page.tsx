@@ -5,7 +5,6 @@ import FilterBar, { FilterState, defaultFilters } from "@/components/FilterBar";
 import KPICards from "@/components/KPICards";
 import CategoryDonut from "@/components/CategoryDonut";
 import DrillDownModal from "@/components/DrillDownModal";
-import QueryInterface from "@/components/QueryInterface";
 import TransactionTable from "@/components/TransactionTable";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import AlertsPanel from "@/components/AlertsPanel";
@@ -19,7 +18,27 @@ import CategoryManager from "@/components/CategoryManager";
 import TellerConnect from "@/components/TellerConnect";
 import { getTransactions, Transaction } from "@/lib/api";
 import { formatCurrency, cn } from "@/lib/utils";
-import { MessageCircle, ChevronDown, ChevronUp } from "lucide-react";
+import FloatingChat from "@/components/FloatingChat";
+
+/** End-of-period ISO date for /dashboard/accounts-summary ?as_of= */
+function periodEndDate(f: FilterState): string | undefined {
+  if (f.mode === "monthly") {
+    const [y, m] = f.selectedMonth.split("-").map(Number);
+    const lastDay = new Date(y, m, 0); // day 0 of next month = last day of this month
+    return lastDay.toISOString().slice(0, 10);
+  }
+  if (f.mode === "weekly") {
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7) - f.weekOffset * 7);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return sunday.toISOString().slice(0, 10);
+  }
+  if (f.mode === "custom" && f.dateTo) return f.dateTo;
+  return undefined;
+}
 
 function applyFilters(txns: Transaction[], f: FilterState): Transaction[] {
   return txns.filter(t => {
@@ -76,6 +95,8 @@ export default function Page() {
     setDrillDown({ label, txns });
   }, []);
 
+  const asOf = useMemo(() => periodEndDate(filters), [filters]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
       <Sidebar activeView={activeView} onNavigate={setActiveView} />
@@ -91,6 +112,7 @@ export default function Page() {
             maxAmount={maxAmount}
             onDrillDown={openDrill}
             onNavigate={setActiveView}
+            asOf={asOf}
           />
         )}
         {activeView === "transactions" && (
@@ -150,6 +172,9 @@ export default function Page() {
           onClose={() => setDrillDown(null)}
         />
       )}
+
+      {/* Global floating chat — always visible */}
+      <FloatingChat />
     </div>
   );
 }
@@ -163,14 +188,14 @@ interface DashboardProps {
   maxAmount: number;
   onDrillDown: (label: string, txns: Transaction[]) => void;
   onNavigate: (v: View) => void;
+  asOf?: string;
 }
 
 function DashboardView({
   filters, onFiltersChange, allTxns, filteredTxns,
-  loading, maxAmount, onDrillDown, onNavigate,
+  loading, maxAmount, onDrillDown, onNavigate, asOf,
 }: DashboardProps) {
   const recentTxns = filteredTxns.slice(0, 8);
-  const [chatOpen, setChatOpen] = useState(false);
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
@@ -192,7 +217,7 @@ function DashboardView({
 
       <FilterBar filters={filters} onChange={onFiltersChange} maxAmount={maxAmount} />
 
-      <KPICards transactions={filteredTxns} allTxns={allTxns} onDrillDown={onDrillDown} />
+      <KPICards transactions={filteredTxns} allTxns={allTxns} onDrillDown={onDrillDown} asOf={asOf} />
 
       {/* Charts — inline analytics */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
@@ -284,26 +309,6 @@ function DashboardView({
 
       {/* Upcoming Charges */}
       <UpcomingCharges allTxns={allTxns} />
-
-      {/* Inline Quick-Ask Chat */}
-      <div className="bg-surface border border-border rounded-2xl overflow-hidden">
-        <button
-          onClick={() => setChatOpen(o => !o)}
-          className="w-full flex items-center justify-between px-5 py-4 hover:bg-elevated transition-colors"
-        >
-          <div className="flex items-center gap-2">
-            <MessageCircle size={14} className="text-accent" />
-            <span className="font-semibold text-tx text-sm">Ask about your finances</span>
-            <span className="text-xs text-tx-3">— AI-powered Q&A</span>
-          </div>
-          {chatOpen ? <ChevronUp size={14} className="text-tx-3" /> : <ChevronDown size={14} className="text-tx-3" />}
-        </button>
-        {chatOpen && (
-          <div className="border-t border-border" style={{ height: "420px" }}>
-            <QueryInterface />
-          </div>
-        )}
-      </div>
     </div>
   );
 }

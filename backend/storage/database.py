@@ -215,6 +215,18 @@ def init_db():
             FOREIGN KEY (enrollment_id) REFERENCES teller_enrollments(enrollment_id)
         );
 
+        CREATE TABLE IF NOT EXISTS teller_balance_history (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id        TEXT NOT NULL,
+            balance_available REAL,
+            balance_ledger    REAL,
+            recorded_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (account_id) REFERENCES teller_accounts(account_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bal_hist_account ON teller_balance_history(account_id);
+        CREATE INDEX IF NOT EXISTS idx_bal_hist_date    ON teller_balance_history(recorded_at);
+
         -- Seed system_state rows
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('gmail', NULL);
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('yahoo', NULL);

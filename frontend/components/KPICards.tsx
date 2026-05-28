@@ -11,6 +11,8 @@ interface Props {
   transactions: Transaction[];
   allTxns: Transaction[];
   onDrillDown: (label: string, txns: Transaction[]) => void;
+  /** End-of-period ISO date for period-aware Bank/CC balance lookup */
+  asOf?: string;
 }
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
@@ -33,12 +35,12 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
 
 function Card({
   label, value, sub, icon, iconBg, border, accent,
-  sparkData, sparkColor, onClick, loading, badge,
+  sparkData, sparkColor, onClick, loading,
 }: {
   label: string; value: string; sub: string;
   icon: React.ReactNode; iconBg: string; border: string; accent: string;
   sparkData?: number[]; sparkColor?: string;
-  onClick?: () => void; loading?: boolean; badge?: React.ReactNode;
+  onClick?: () => void; loading?: boolean;
 }) {
   return (
     <button
@@ -50,10 +52,7 @@ function Card({
       )}
     >
       <div className="flex items-start justify-between mb-2.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-tx-2 truncate">{label}</span>
-          {badge}
-        </div>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-tx-2 truncate">{label}</span>
         <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ml-1", iconBg)}>
           {icon}
         </span>
@@ -83,17 +82,17 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function KPICards({ transactions, allTxns, onDrillDown }: Props) {
+export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: Props) {
   const [accounts, setAccounts] = useState<AccountsSummary | null>(null);
   const [acctLoading, setAcctLoading] = useState(true);
 
   useEffect(() => {
     setAcctLoading(true);
-    getAccountsSummary()
+    getAccountsSummary(asOf)
       .then(setAccounts)
       .catch(() => setAccounts(null))
       .finally(() => setAcctLoading(false));
-  }, []);
+  }, [asOf]);
 
   const m = useMemo(() => {
     const credits = transactions.filter(t => t.transaction_type === "credit");
@@ -120,18 +119,13 @@ export default function KPICards({ transactions, allTxns, onDrillDown }: Props) 
 
   const nw = accounts?.net_worth ?? 0;
   const ccHigh = (accounts?.cc_balance ?? 0) > 5000;
-
-  const LiveBadge = () => (
-    <span className="flex items-center gap-0.5 text-[9px] text-income font-semibold shrink-0">
-      <span className="w-1 h-1 rounded-full bg-income inline-block" />live
-    </span>
-  );
+  const isPeriod = !!asOf;
 
   return (
     <div className="space-y-3">
-      {/* Row 1 — period-filtered */}
+      {/* Row 1 — period-filtered: Income, Expenses, Bank Balance, CC Balance */}
       <SectionLabel>This period</SectionLabel>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card
           label="Income" value={formatCurrency(m.income)}
           sub={`${m.credits.length} credit${m.credits.length !== 1 ? "s" : ""}`}
@@ -148,37 +142,39 @@ export default function KPICards({ transactions, allTxns, onDrillDown }: Props) 
           sparkData={weekly.map(w => w.expenses)} sparkColor="var(--color-expense, #ef4444)"
           onClick={() => onDrillDown("Expenses", m.debits)}
         />
-      </div>
-
-      {/* Row 2 — always-current snapshot */}
-      <SectionLabel>Current balances &amp; portfolio</SectionLabel>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Card
-          label="Bank Balance" value={accounts ? formatCurrency(accounts.bank_balance) : "—"}
-          sub="checking + savings"
+          label="Bank Balance"
+          value={accounts ? formatCurrency(accounts.bank_balance) : "—"}
+          sub={isPeriod ? "as of period end" : "current"}
           icon={<Building2 size={14} className="text-accent" />}
           iconBg="bg-accent/10" border="border-accent/20 hover:border-accent/40" accent="text-accent"
-          loading={acctLoading} badge={<LiveBadge />}
+          loading={acctLoading}
         />
         <Card
-          label="CC Balance" value={accounts ? formatCurrency(accounts.cc_balance) : "—"}
-          sub="total owed"
+          label="CC Balance"
+          value={accounts ? formatCurrency(accounts.cc_balance) : "—"}
+          sub={isPeriod ? "as of period end" : "total owed"}
           icon={<CreditCard size={14} className={ccHigh ? "text-expense" : "text-warn"} />}
           iconBg={ccHigh ? "bg-expense/10" : "bg-warn/10"}
           border={ccHigh ? "border-expense/20 hover:border-expense/40" : "border-warn/20 hover:border-warn/40"}
           accent={ccHigh ? "text-expense" : "text-warn"}
-          loading={acctLoading} badge={<LiveBadge />}
+          loading={acctLoading}
         />
+      </div>
+
+      {/* Row 2 — portfolio snapshot (not period-filtered) */}
+      <SectionLabel>Portfolio snapshot</SectionLabel>
+      <div className="grid grid-cols-3 gap-3">
         <Card
           label="401K · Fidelity" value={accounts ? formatCurrency(accounts.portfolio_401k) : "—"}
-          sub="retirement"
+          sub="retirement · latest"
           icon={<PiggyBank size={14} className="text-income" />}
           iconBg="bg-income/10" border="border-income/20 hover:border-income/40" accent="text-income"
           loading={acctLoading}
         />
         <Card
           label="Stocks" value={accounts ? formatCurrency(accounts.portfolio_stocks) : "—"}
-          sub="Robinhood · Schwab"
+          sub="Robinhood · Schwab · latest"
           icon={<BarChart3 size={14} className="text-savings" />}
           iconBg="bg-savings/10" border="border-savings/20 hover:border-savings/40" accent="text-savings"
           loading={acctLoading}

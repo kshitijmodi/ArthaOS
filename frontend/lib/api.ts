@@ -185,5 +185,5 @@ export interface AccountsSummary {
   net_worth: number;
 }
 
-export const getAccountsSummary = () =>
-  apiFetch<AccountsSummary>("/dashboard/accounts-summary");
+export const getAccountsSummary = (as_of?: string) =>
+  apiFetch<AccountsSummary>(`/dashboard/accounts-summary${as_of ? `?as_of=${as_of}` : ""}`);

@@ -68,9 +68,11 @@ def sync_enrollment(enrollment_id: str, access_token: str, institution_name: str
             account_id = account["id"]
             accounts_synced += 1
 
-            # Update balance snapshot
+            # Update balance snapshot and store history
             try:
                 balances = get_account_balances(access_token, account_id)
+                bal_available = balances.get("available")
+                bal_ledger    = balances.get("ledger")
                 conn.execute(
                     """INSERT INTO teller_accounts
                        (enrollment_id, account_id, institution, name, type, subtype,
@@ -88,9 +90,16 @@ def sync_enrollment(enrollment_id: str, access_token: str, institution_name: str
                         account.get("type", ""),
                         account.get("subtype", ""),
                         account.get("currency", "USD"),
-                        balances.get("available"),
-                        balances.get("ledger"),
+                        bal_available,
+                        bal_ledger,
                     ),
+                )
+                # Store a timestamped snapshot for historical period lookups
+                conn.execute(
+                    """INSERT INTO teller_balance_history
+                       (account_id, balance_available, balance_ledger)
+                       VALUES (?, ?, ?)""",
+                    (account_id, bal_available, bal_ledger),
                 )
             except Exception as exc:
                 logger.warning("[TellerSync] Balance fetch failed for %s: %s", account_id, exc)

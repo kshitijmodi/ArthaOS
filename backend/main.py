@@ -312,46 +312,67 @@ def dashboard_summary():
 
 
 @app.get("/dashboard/accounts-summary")
-def accounts_summary():
-    """Bank balance, CC balance, 401K (Fidelity), Stocks (Robinhood/Schwab), net worth."""
+def accounts_summary(as_of: Optional[str] = None):
+    """
+    Bank balance, CC balance (period-aware if as_of supplied), 401K, Stocks, net worth.
+    as_of: ISO date string (YYYY-MM-DD). When supplied, uses the balance reading from
+    teller_balance_history closest to (but not after) that date. Falls back to the
+    current teller_accounts value when no history exists for that period.
+    """
     with db() as conn:
-        # Bank balance = sum of available balance for checking/savings accounts
-        bank_row = conn.execute(
-            """SELECT COALESCE(SUM(COALESCE(balance_available, balance_ledger, 0)), 0) as total
-               FROM teller_accounts
-               WHERE lower(type) IN ('depository','checking','savings')"""
-        ).fetchone()
-        bank_balance = round(bank_row["total"], 2)
+        if as_of:
+            # For each account, find the most recent history row on or before as_of
+            def period_balance(account_type_filter: str) -> float:
+                rows = conn.execute(
+                    f"""SELECT a.account_id, a.type,
+                               COALESCE(
+                                 (SELECT COALESCE(h.balance_available, h.balance_ledger)
+                                  FROM teller_balance_history h
+                                  WHERE h.account_id = a.account_id
+                                    AND date(h.recorded_at) <= date(?)
+                                  ORDER BY h.recorded_at DESC LIMIT 1),
+                                 COALESCE(a.balance_available, a.balance_ledger, 0)
+                               ) as bal
+                        FROM teller_accounts a
+                        WHERE {account_type_filter}""",
+                    (as_of,)
+                ).fetchall()
+                return sum(abs(r["bal"] or 0) for r in rows)
 
-        # CC balance = sum of ledger balance for credit accounts (positive = owed)
-        cc_row = conn.execute(
-            """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
-               FROM teller_accounts
-               WHERE lower(type) IN ('credit','credit_card')"""
-        ).fetchone()
-        cc_balance = round(cc_row["total"], 2)
+            bank_balance = round(period_balance("lower(a.type) IN ('depository','checking','savings')"), 2)
+            cc_balance   = round(period_balance("lower(a.type) IN ('credit','credit_card')"), 2)
+        else:
+            bank_row = conn.execute(
+                """SELECT COALESCE(SUM(COALESCE(balance_available, balance_ledger, 0)), 0) as total
+                   FROM teller_accounts WHERE lower(type) IN ('depository','checking','savings')"""
+            ).fetchone()
+            bank_balance = round(bank_row["total"], 2)
 
-        # 401K = Fidelity holdings value
+            cc_row = conn.execute(
+                """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
+                   FROM teller_accounts WHERE lower(type) IN ('credit','credit_card')"""
+            ).fetchone()
+            cc_balance = round(cc_row["total"], 2)
+
+        # 401K = Fidelity holdings (always latest snapshot)
         fidelity_row = conn.execute(
             """SELECT COALESCE(SUM(h.total_value), 0) as total
                FROM investment_holdings h
                WHERE h.as_of_date = (
                    SELECT MAX(as_of_date) FROM investment_holdings h2
                    WHERE h2.broker = h.broker AND h2.account = h.account
-               )
-               AND lower(h.broker) LIKE '%fidelity%'"""
+               ) AND lower(h.broker) LIKE '%fidelity%'"""
         ).fetchone()
         portfolio_401k = round(fidelity_row["total"], 2)
 
-        # Stocks = Robinhood + Schwab holdings value
+        # Stocks = Robinhood + Schwab (always latest snapshot)
         stocks_row = conn.execute(
             """SELECT COALESCE(SUM(h.total_value), 0) as total
                FROM investment_holdings h
                WHERE h.as_of_date = (
                    SELECT MAX(as_of_date) FROM investment_holdings h2
                    WHERE h2.broker = h.broker AND h2.account = h.account
-               )
-               AND (lower(h.broker) LIKE '%robinhood%' OR lower(h.broker) LIKE '%schwab%')"""
+               ) AND (lower(h.broker) LIKE '%robinhood%' OR lower(h.broker) LIKE '%schwab%')"""
         ).fetchone()
         portfolio_stocks = round(stocks_row["total"], 2)
 
@@ -363,6 +384,7 @@ def accounts_summary():
         "portfolio_401k": portfolio_401k,
         "portfolio_stocks": portfolio_stocks,
         "net_worth": net_worth,
+        "as_of": as_of,
     }
 
 
