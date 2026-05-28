@@ -648,6 +648,12 @@ def recategorize_misc():
     updated = recategorize_miscellaneous()
     return {"updated": updated}
 
+@app.post("/categorizer/recategorize-all")
+def recategorize_all_endpoint():
+    from backend.processing.categorizer import recategorize_all
+    updated = recategorize_all()
+    return {"updated": updated}
+
 
 # ---------------------------------------------------------------------------
 # Category management endpoints

@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { Plus, Pencil, Trash2, Check, X, Tag } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, X, Tag, RefreshCw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,8 @@ export default function CategoryManager() {
   const [newKeywords, setNewKeywords] = useState("");
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [recategorizing, setRecategorizing] = useState(false);
+  const [recatResult, setRecatResult] = useState<string | null>(null);
 
   const load = () =>
     apiFetch<{ categories: Category[] }>("/categories")
@@ -55,6 +57,19 @@ export default function CategoryManager() {
     load();
   };
 
+  const recategorizeAll = async () => {
+    setRecategorizing(true);
+    setRecatResult(null);
+    try {
+      const r = await apiFetch<{ updated: number }>("/categorizer/recategorize-all", { method: "POST" });
+      setRecatResult(`Re-categorized ${r.updated} transaction${r.updated !== 1 ? "s" : ""}`);
+    } catch (e) {
+      setRecatResult("Failed — check server logs");
+    } finally {
+      setRecategorizing(false);
+    }
+  };
+
   const addCategory = async () => {
     if (!newName.trim()) return;
     setSaving(true);
@@ -76,17 +91,34 @@ export default function CategoryManager() {
 
   return (
     <section className="rounded-2xl border border-border bg-surface p-5">
-      <div className="flex items-center gap-2 mb-5">
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
         <Tag size={16} className="text-accent" />
         <h3 className="font-semibold text-tx">Categories</h3>
         <span className="text-xs text-tx-3">({categories.length})</span>
-        <button
-          onClick={() => setAdding(true)}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent-h rounded-xl text-xs text-white transition-colors"
-        >
-          <Plus size={13} /> Add
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={recategorizeAll}
+            disabled={recategorizing}
+            title="Re-apply keyword rules to all auto-categorized transactions"
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-xl text-xs text-tx-2 hover:text-tx hover:border-border/80 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={recategorizing ? "animate-spin" : ""} />
+            {recategorizing ? "Running…" : "Re-categorize All"}
+          </button>
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent-h rounded-xl text-xs text-white transition-colors"
+          >
+            <Plus size={13} /> Add
+          </button>
+        </div>
       </div>
+      {recatResult && (
+        <div className="mb-4 text-xs px-3 py-2 rounded-lg bg-elevated text-tx-2 flex items-center justify-between">
+          <span>{recatResult}</span>
+          <button onClick={() => setRecatResult(null)} className="text-tx-3 hover:text-tx ml-3"><X size={11} /></button>
+        </div>
+      )}
 
       {adding && (
         <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 space-y-3">

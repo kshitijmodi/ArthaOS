@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import Sidebar, { View } from "@/components/Sidebar";
 import FilterBar, { FilterState, defaultFilters } from "@/components/FilterBar";
+import { Menu, Zap } from "lucide-react";
 import KPICards from "@/components/KPICards";
 import CategoryDonut from "@/components/CategoryDonut";
 import DrillDownModal from "@/components/DrillDownModal";
@@ -76,6 +77,7 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [drillDown, setDrillDown] = useState<{ label: string; txns: Transaction[] } | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     getTransactions({ page: 1, page_size: 1000, sort_by: "date", sort_dir: "desc" })
@@ -97,11 +99,46 @@ export default function Page() {
 
   const asOf = useMemo(() => periodEndDate(filters), [filters]);
 
+  const navigate = useCallback((v: View) => {
+    setActiveView(v);
+    setMobileNavOpen(false);
+  }, []);
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
-      <Sidebar activeView={activeView} onNavigate={setActiveView} />
+      {/* Mobile backdrop */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
+      {/* Sidebar — always in flow on desktop, overlay on mobile */}
+      <div className={cn(
+        "md:flex md:relative md:z-auto shrink-0",
+        mobileNavOpen ? "flex fixed inset-y-0 left-0 z-50" : "hidden"
+      )}>
+        <Sidebar activeView={activeView} onNavigate={navigate} />
+      </div>
 
       <main className="flex-1 overflow-y-auto min-w-0">
+        {/* Mobile top bar */}
+        <div className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-surface sticky top-0 z-30">
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            className="p-1.5 rounded-lg text-tx-2 hover:text-tx hover:bg-elevated transition-colors"
+          >
+            <Menu size={20} />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg bg-accent flex items-center justify-center">
+              <Zap size={11} className="text-white" />
+            </div>
+            <span className="font-bold text-sm text-tx">ArthaOS</span>
+          </div>
+        </div>
+
         {activeView === "dashboard" && (
           <DashboardView
             filters={filters}
@@ -111,12 +148,12 @@ export default function Page() {
             loading={loading}
             maxAmount={maxAmount}
             onDrillDown={openDrill}
-            onNavigate={setActiveView}
+            onNavigate={navigate}
             asOf={asOf}
           />
         )}
         {activeView === "transactions" && (
-          <div className="p-6 max-w-[1200px] mx-auto">
+          <div className="p-4 md:p-6 max-w-[1200px] mx-auto">
             <div className="mb-6">
               <h1 className="text-xl font-bold text-tx">Transactions</h1>
               <p className="text-sm text-tx-2 mt-1">Full history with search, star, and category editing</p>
@@ -125,7 +162,7 @@ export default function Page() {
           </div>
         )}
         {activeView === "investments" && (
-          <div className="p-6 max-w-[1200px] mx-auto">
+          <div className="p-4 md:p-6 max-w-[1200px] mx-auto">
             <div className="mb-6">
               <h1 className="text-xl font-bold text-tx">Investments</h1>
               <p className="text-sm text-tx-2 mt-1">Robinhood · Schwab · Fidelity 401K</p>
@@ -134,7 +171,7 @@ export default function Page() {
           </div>
         )}
         {activeView === "alerts" && (
-          <div className="p-6 max-w-[900px] mx-auto">
+          <div className="p-4 md:p-6 max-w-[900px] mx-auto">
             <div className="mb-6">
               <h1 className="text-xl font-bold text-tx">Alerts</h1>
               <p className="text-sm text-tx-2 mt-1">Anomalies, overspends, duplicates and upcoming charges</p>
@@ -143,7 +180,7 @@ export default function Page() {
           </div>
         )}
         {activeView === "goals" && (
-          <div className="p-6 max-w-[900px] mx-auto">
+          <div className="p-4 md:p-6 max-w-[900px] mx-auto">
             <div className="mb-6">
               <h1 className="text-xl font-bold text-tx">Goals</h1>
               <p className="text-sm text-tx-2 mt-1">Spend limits, savings targets and investment milestones</p>
@@ -152,7 +189,7 @@ export default function Page() {
           </div>
         )}
         {activeView === "settings" && (
-          <div className="p-6 max-w-[900px] mx-auto space-y-8">
+          <div className="p-4 md:p-6 max-w-[900px] mx-auto space-y-8">
             <div>
               <h1 className="text-xl font-bold text-tx">Settings</h1>
               <p className="text-sm text-tx-2 mt-1">Email ingestion, categories and system configuration</p>
@@ -198,9 +235,9 @@ function DashboardView({
   const recentTxns = filteredTxns.slice(0, 8);
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      {/* Header */}
-      <div className="flex items-start justify-between">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6 max-w-[1400px] mx-auto">
+      {/* Header — hidden on mobile (top bar in page.tsx covers it) */}
+      <div className="hidden md:flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-tx">Financial Overview</h1>
           <p className="text-sm text-tx-2 mt-1">

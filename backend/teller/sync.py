@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from backend.storage.database import db, is_duplicate_transaction
 from backend.teller.client import get_accounts, get_transactions, get_account_balances
-from backend.processing.categorizer import categorize
+from backend.processing.categorizer import categorize, get_valid_categories
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,8 @@ def _upsert_transaction(conn, tx: dict, institution: str, account_name: str = ""
     amount = abs(float(tx.get("amount", 0)))
     tx_type = TELLER_TX_TYPE_MAP.get(tx.get("type", "debit"), "debit")
     description = tx.get("description", "") or tx.get("details", {}).get("counterparty", {}).get("name", "")
-    category = tx.get("details", {}).get("category", "") or categorize(description)
+    teller_cat = (tx.get("details", {}).get("category", "") or "").strip()
+    category = teller_cat if teller_cat in get_valid_categories() else categorize(description)
     date = tx.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     source_file = f"teller:{tx['id']}"
 

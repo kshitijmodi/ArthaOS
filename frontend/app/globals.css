@@ -42,3 +42,13 @@
   }
   ::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-text3)); }
 }
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

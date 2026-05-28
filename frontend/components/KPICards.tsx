@@ -164,7 +164,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
 
       {/* Row 2 — portfolio snapshot (not period-filtered) */}
       <SectionLabel>Portfolio snapshot</SectionLabel>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card
           label="401K · Fidelity" value={accounts ? formatCurrency(accounts.portfolio_401k) : "—"}
           sub="retirement · latest"

@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, X, Calendar } from "lucide-react";
 import { cn, CATEGORIES } from "@/lib/utils";
+import { apiFetch } from "@/lib/api";
 
 export interface FilterState {
   mode: "monthly" | "weekly" | "custom";
@@ -69,6 +70,13 @@ interface Props {
 export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Props) {
   const [catOpen, setCatOpen] = useState(false);
   const catRef = useRef<HTMLDivElement>(null);
+  const [categoryList, setCategoryList] = useState<string[]>([...CATEGORIES].sort());
+
+  useEffect(() => {
+    apiFetch<{ categories: { name: string }[] }>("/categories")
+      .then(r => setCategoryList(r.categories.map(c => c.name).sort()))
+      .catch(() => {}); // keep static fallback
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -109,9 +117,9 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
   );
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2 md:space-y-3">
       {/* Mode selector */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-2 md:gap-3 flex-wrap">
         <div className="flex items-center gap-0.5 bg-elevated rounded-xl p-1 border border-border/50">
           {modeBtn("monthly", "Monthly")}
           {modeBtn("weekly",  "Weekly")}
@@ -138,7 +146,7 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
           {catOpen && (
             <div className="absolute top-full left-0 mt-1.5 w-52 bg-surface border border-border rounded-xl shadow-2xl z-50 animate-fade-in overflow-hidden">
               <div className="p-1.5 max-h-60 overflow-y-auto">
-                {CATEGORIES.map(cat => (
+                {categoryList.map(cat => (
                   <button
                     key={cat}
                     onClick={() => toggleCat(cat)}
@@ -189,13 +197,13 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
 
       {/* Month pills */}
       {filters.mode === "monthly" && (
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           {monthPills.map(p => (
             <button
               key={p.value}
               onClick={() => onChange({ ...filters, selectedMonth: p.value })}
               className={cn(
-                "px-3 py-1.5 rounded-xl text-xs font-medium transition-all border",
+                "px-3 py-1.5 rounded-xl text-xs font-medium transition-all border shrink-0",
                 filters.selectedMonth === p.value
                   ? "bg-accent text-white border-accent shadow-sm"
                   : "border-border text-tx-2 hover:text-tx hover:border-border/80 hover:bg-elevated"
@@ -209,13 +217,13 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
 
       {/* Week pills */}
       {filters.mode === "weekly" && (
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           {weekPills.map(p => (
             <button
               key={p.offset}
               onClick={() => onChange({ ...filters, weekOffset: p.offset })}
               className={cn(
-                "px-3 py-1.5 rounded-xl text-xs font-medium transition-all border",
+                "px-3 py-1.5 rounded-xl text-xs font-medium transition-all border shrink-0",
                 filters.weekOffset === p.offset
                   ? "bg-accent text-white border-accent shadow-sm"
                   : "border-border text-tx-2 hover:text-tx hover:border-border/80 hover:bg-elevated"

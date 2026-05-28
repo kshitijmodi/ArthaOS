@@ -225,6 +225,32 @@ def apply_bulk_correction(transaction_ids: list[int], new_category: str) -> int:
     return count
 
 
+def recategorize_all() -> int:
+    """
+    Re-run keyword/learned-rule categorization on every auto-categorized transaction.
+    Skips LLM to stay fast. Only updates rows where the new category differs.
+    """
+    from backend.storage.database import db
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, description, category FROM transactions WHERE category_source='auto'"
+        ).fetchall()
+
+    updated = 0
+    with db() as conn:
+        for row in rows:
+            new_cat = _learned_match(row["description"]) or _rule_match(row["description"])
+            if new_cat and new_cat != row["category"]:
+                conn.execute(
+                    "UPDATE transactions SET category = ? WHERE id = ?",
+                    (new_cat, row["id"]),
+                )
+                updated += 1
+
+    logger.info("[Categorizer] recategorize_all: updated %d transactions", updated)
+    return updated
+
+
 def recategorize_miscellaneous() -> int:
     """
     Re-run categorization on all Miscellaneous transactions that were auto-categorized.
