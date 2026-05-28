@@ -1,41 +1,33 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown, SlidersHorizontal, X, Bell } from "lucide-react";
+import { ChevronDown, SlidersHorizontal, X, Calendar } from "lucide-react";
 import { cn, CATEGORIES } from "@/lib/utils";
 
-export type AlertType = "overspend" | "anomaly" | "duplicate" | "budget_overrun" | "card_due" | "recurring_change";
-
 export interface FilterState {
-  period: "day" | "week" | "month" | "year" | "all";
+  period: "day" | "week" | "month" | "year" | "all" | "custom";
+  dateFrom: string;
+  dateTo: string;
   categories: string[];
   amountMin: number;
   amountMax: number;
-  alertTypes: AlertType[];
 }
 
 export const defaultFilters: FilterState = {
   period: "month",
+  dateFrom: "",
+  dateTo: "",
   categories: [],
   amountMin: 0,
   amountMax: 50000,
-  alertTypes: [],
 };
 
-const ALERT_TYPES: { key: AlertType; label: string }[] = [
-  { key: "overspend",        label: "Overspend"        },
-  { key: "anomaly",          label: "Anomalies"        },
-  { key: "duplicate",        label: "Duplicates"       },
-  { key: "budget_overrun",   label: "Budget Overrun"   },
-  { key: "card_due",         label: "Card Due"         },
-  { key: "recurring_change", label: "Recurring Changes"},
-];
-
 const PERIODS: { key: FilterState["period"]; label: string }[] = [
-  { key: "day",   label: "Today" },
-  { key: "week",  label: "7D"    },
-  { key: "month", label: "MTD"   },
-  { key: "year",  label: "YTD"   },
-  { key: "all",   label: "All"   },
+  { key: "day",    label: "Today"  },
+  { key: "week",   label: "7D"     },
+  { key: "month",  label: "MTD"    },
+  { key: "year",   label: "YTD"    },
+  { key: "all",    label: "All"    },
+  { key: "custom", label: "Custom" },
 ];
 
 interface Props {
@@ -46,14 +38,11 @@ interface Props {
 
 export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Props) {
   const [catOpen, setCatOpen] = useState(false);
-  const [alertOpen, setAlertOpen] = useState(false);
   const catRef = useRef<HTMLDivElement>(null);
-  const alertRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (catRef.current && !catRef.current.contains(e.target as Node)) setCatOpen(false);
-      if (alertRef.current && !alertRef.current.contains(e.target as Node)) setAlertOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -66,17 +55,9 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
     onChange({ ...filters, categories: next });
   };
 
-  const toggleAlertType = (type: AlertType) => {
-    const next = filters.alertTypes.includes(type)
-      ? filters.alertTypes.filter(t => t !== type)
-      : [...filters.alertTypes, type];
-    onChange({ ...filters, alertTypes: next });
-  };
-
   const hasActive =
     filters.period !== "month" ||
     filters.categories.length > 0 ||
-    filters.alertTypes.length > 0 ||
     filters.amountMin > 0 ||
     filters.amountMax < maxAmount;
 
@@ -100,6 +81,26 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
         ))}
       </div>
 
+      {/* Custom date range */}
+      {filters.period === "custom" && (
+        <div className="flex items-center gap-2 bg-surface border border-accent/40 rounded-xl px-3 py-1.5 animate-fade-in">
+          <Calendar size={12} className="text-accent shrink-0" />
+          <input
+            type="date"
+            value={filters.dateFrom}
+            onChange={e => onChange({ ...filters, dateFrom: e.target.value })}
+            className="text-xs bg-transparent text-tx outline-none w-28"
+          />
+          <span className="text-tx-3 text-xs">→</span>
+          <input
+            type="date"
+            value={filters.dateTo}
+            onChange={e => onChange({ ...filters, dateTo: e.target.value })}
+            className="text-xs bg-transparent text-tx outline-none w-28"
+          />
+        </div>
+      )}
+
       {/* Category dropdown */}
       <div className="relative" ref={catRef}>
         <button
@@ -112,9 +113,7 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
           )}
         >
           <span>
-            {filters.categories.length === 0
-              ? "All Categories"
-              : `${filters.categories.length} selected`}
+            {filters.categories.length === 0 ? "All Categories" : `${filters.categories.length} selected`}
           </span>
           <ChevronDown size={12} className={cn("transition-transform", catOpen && "rotate-180")} />
         </button>
@@ -161,68 +160,6 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
         )}
       </div>
 
-      {/* Alert type dropdown */}
-      <div className="relative" ref={alertRef}>
-        <button
-          onClick={() => setAlertOpen(o => !o)}
-          className={cn(
-            "flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-all",
-            filters.alertTypes.length > 0
-              ? "border-expense/50 bg-expense/10 text-expense"
-              : "border-border bg-surface text-tx-2 hover:text-tx hover:border-border/80"
-          )}
-        >
-          <Bell size={12} />
-          <span>
-            {filters.alertTypes.length === 0
-              ? "All Alerts"
-              : `${filters.alertTypes.length} alert type${filters.alertTypes.length > 1 ? "s" : ""}`}
-          </span>
-          <ChevronDown size={12} className={cn("transition-transform", alertOpen && "rotate-180")} />
-        </button>
-
-        {alertOpen && (
-          <div className="absolute top-full left-0 mt-1.5 w-52 bg-surface border border-border rounded-xl shadow-2xl z-50 animate-fade-in overflow-hidden">
-            <div className="p-1.5">
-              {ALERT_TYPES.map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => toggleAlertType(key)}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-left transition-colors",
-                    filters.alertTypes.includes(key)
-                      ? "bg-expense/10 text-expense"
-                      : "text-tx-2 hover:text-tx hover:bg-elevated"
-                  )}
-                >
-                  <span className={cn(
-                    "w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors",
-                    filters.alertTypes.includes(key) ? "bg-expense border-expense" : "border-border"
-                  )}>
-                    {filters.alertTypes.includes(key) && (
-                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                        <path d="M1 4L3 6L7 2" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                    )}
-                  </span>
-                  {label}
-                </button>
-              ))}
-            </div>
-            {filters.alertTypes.length > 0 && (
-              <div className="border-t border-border p-1.5">
-                <button
-                  onClick={() => { onChange({ ...filters, alertTypes: [] }); setAlertOpen(false); }}
-                  className="w-full text-xs text-expense hover:bg-expense/10 px-3 py-1.5 rounded-lg transition-colors"
-                >
-                  Clear selection
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Amount range */}
       <div className="flex items-center gap-2 bg-surface border border-border rounded-xl px-3 py-2">
         <SlidersHorizontal size={12} className="text-tx-3 shrink-0" />
@@ -248,7 +185,7 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
 
       {hasActive && (
         <button
-          onClick={() => onChange({ ...defaultFilters, amountMax: maxAmount, alertTypes: [] })}
+          onClick={() => onChange({ ...defaultFilters, amountMax: maxAmount })}
           className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs text-tx-2 hover:text-tx hover:bg-elevated transition-all animate-fade-in"
         >
           <X size={12} />

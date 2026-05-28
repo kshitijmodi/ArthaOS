@@ -11,6 +11,9 @@ import TransactionTable from "@/components/TransactionTable";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import AlertsPanel from "@/components/AlertsPanel";
 import GoalsPanel from "@/components/GoalsPanel";
+import GoalStrip from "@/components/GoalStrip";
+import BurnRateBar from "@/components/BurnRateBar";
+import UpcomingCharges from "@/components/UpcomingCharges";
 import InvestmentsPanel from "@/components/InvestmentsPanel";
 import InsightsPanel from "@/components/InsightsPanel";
 import IngestionStatus from "@/components/IngestionStatus";
@@ -23,6 +26,7 @@ function applyFilters(txns: Transaction[], f: FilterState): Transaction[] {
   const now = new Date();
   return txns.filter(t => {
     const date = new Date(t.date);
+
     if (f.period === "day") {
       const cut = new Date(now); cut.setHours(0, 0, 0, 0);
       if (date < cut) return false;
@@ -33,7 +37,11 @@ function applyFilters(txns: Transaction[], f: FilterState): Transaction[] {
       if (date.getMonth() !== now.getMonth() || date.getFullYear() !== now.getFullYear()) return false;
     } else if (f.period === "year") {
       if (date.getFullYear() !== now.getFullYear()) return false;
+    } else if (f.period === "custom") {
+      if (f.dateFrom && t.date < f.dateFrom) return false;
+      if (f.dateTo   && t.date > f.dateTo)   return false;
     }
+
     if (f.categories.length > 0 && !f.categories.includes(t.category)) return false;
     if (f.amountMin > 0 && t.amount < f.amountMin) return false;
     if (f.amountMax > 0 && t.amount > f.amountMax) return false;
@@ -175,6 +183,7 @@ function DashboardView({
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
+      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-tx">Financial Overview</h1>
@@ -192,8 +201,11 @@ function DashboardView({
 
       <FilterBar filters={filters} onChange={onFiltersChange} maxAmount={maxAmount} />
 
-      <KPICards transactions={filteredTxns} onDrillDown={onDrillDown} />
+      <KPICards transactions={filteredTxns} allTxns={allTxns} onDrillDown={onDrillDown} />
 
+      <BurnRateBar allTxns={allTxns} />
+
+      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
         <div className="lg:col-span-3 bg-surface border border-border rounded-2xl p-5">
           <h2 className="font-semibold text-tx">Cash Flow</h2>
@@ -207,6 +219,10 @@ function DashboardView({
         </div>
       </div>
 
+      {/* Goals strip */}
+      <GoalStrip onNavigate={onNavigate as (v: "goals") => void} />
+
+      {/* Recent Transactions */}
       <div className="bg-surface border border-border rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
@@ -272,10 +288,8 @@ function DashboardView({
         )}
       </div>
 
-      <div>
-        <h2 className="font-semibold text-tx mb-4">Active Alerts</h2>
-        <AlertsPanel alertTypes={filters.alertTypes} />
-      </div>
+      {/* Upcoming Charges */}
+      <UpcomingCharges allTxns={allTxns} />
     </div>
   );
 }
