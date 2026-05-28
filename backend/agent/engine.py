@@ -356,7 +356,221 @@ def detect_budget_overrun() -> list[Alert]:
 
 
 # ---------------------------------------------------------------------------
-# 6. Card Payment Due Date Monitor
+# 6. Spend Pace Projector (per category)
+# ---------------------------------------------------------------------------
+
+def detect_spend_pace() -> list[Alert]:
+    """
+    For each category, project end-of-month spend at current daily rate.
+    Alerts with narrative context: where you are, where you're heading, vs history.
+    """
+    alerts = []
+    today = datetime.now()
+    day_of_month = today.day
+    days_in_month = 30
+
+    if day_of_month < 5:
+        return alerts  # too early in month to project meaningfully
+
+    with db() as conn:
+        curr_rows = conn.execute(
+            """SELECT category, SUM(amount) as mtd
+               FROM transactions
+               WHERE transaction_type='debit'
+                 AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
+               GROUP BY category"""
+        ).fetchall()
+
+        hist_rows = conn.execute(
+            """SELECT category, AVG(monthly_total) as avg, MAX(monthly_total) as max_ever
+               FROM (
+                 SELECT category, strftime('%Y-%m', date) as month, SUM(amount) as monthly_total
+                 FROM transactions
+                 WHERE transaction_type='debit'
+                   AND date < date('now','start of month')
+                 GROUP BY category, month
+               )
+               GROUP BY category"""
+        ).fetchall()
+
+    hist_map = {r["category"]: {"avg": r["avg"], "max": r["max_ever"]} for r in hist_rows}
+
+    for row in curr_rows:
+        cat = row["category"]
+        mtd = row["mtd"]
+        projected = (mtd / day_of_month) * days_in_month
+        hist = hist_map.get(cat)
+        if not hist or not hist["avg"]:
+            continue
+        avg = hist["avg"]
+        max_ever = hist["max"]
+
+        days_left = days_in_month - day_of_month
+        over_avg_pct = round((projected / avg - 1) * 100)
+
+        if projected > avg * (1 + OVERSPEND_THRESHOLD):
+            is_record = projected > max_ever
+            severity = "high" if is_record or over_avg_pct > 75 else "medium"
+            record_note = " — that would be your highest ever." if is_record else "."
+            alerts.append(Alert(
+                alert_type="overspend",
+                severity=severity,
+                description=(
+                    f"{cat}: spent ${mtd:,.0f} so far with {days_left} days left. "
+                    f"On pace for ${projected:,.0f} vs your ${avg:,.0f} avg (+{over_avg_pct}%){record_note}"
+                ),
+            ))
+
+    return alerts
+
+
+# ---------------------------------------------------------------------------
+# 7. Weekly Spend Velocity
+# ---------------------------------------------------------------------------
+
+def detect_weekly_velocity() -> list[Alert]:
+    """
+    Compares this week's spend to last week's. Alerts on sharp acceleration.
+    """
+    alerts = []
+    with db() as conn:
+        this_week = conn.execute(
+            """SELECT category, SUM(amount) as total
+               FROM transactions
+               WHERE transaction_type='debit'
+                 AND date >= date('now', 'weekday 0', '-7 days')
+               GROUP BY category"""
+        ).fetchall()
+
+        last_week = conn.execute(
+            """SELECT category, SUM(amount) as total
+               FROM transactions
+               WHERE transaction_type='debit'
+                 AND date >= date('now', 'weekday 0', '-14 days')
+                 AND date < date('now', 'weekday 0', '-7 days')
+               GROUP BY category"""
+        ).fetchall()
+
+    last_map = {r["category"]: r["total"] for r in last_week}
+
+    for row in this_week:
+        cat = row["category"]
+        this = row["total"]
+        last = last_map.get(cat, 0)
+        if last < 10:
+            continue
+        ratio = this / last
+        if ratio >= 2.5:
+            alerts.append(Alert(
+                alert_type="anomaly",
+                severity="medium",
+                description=(
+                    f"{cat} spend this week (${this:,.0f}) is {ratio:.1f}× last week's (${last:,.0f})."
+                ),
+            ))
+
+    return alerts
+
+
+# ---------------------------------------------------------------------------
+# 8. All-Time Category High
+# ---------------------------------------------------------------------------
+
+def detect_all_time_highs() -> list[Alert]:
+    """Alerts when current month spend in a category is an all-time monthly record."""
+    alerts = []
+    with db() as conn:
+        curr_rows = conn.execute(
+            """SELECT category, SUM(amount) as mtd
+               FROM transactions
+               WHERE transaction_type='debit'
+                 AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
+               GROUP BY category"""
+        ).fetchall()
+
+        hist_rows = conn.execute(
+            """SELECT category, MAX(monthly_total) as max_ever
+               FROM (
+                 SELECT category, strftime('%Y-%m', date) as month, SUM(amount) as monthly_total
+                 FROM transactions
+                 WHERE transaction_type='debit'
+                   AND date < date('now','start of month')
+                 GROUP BY category, month
+               )
+               GROUP BY category"""
+        ).fetchall()
+
+    max_map = {r["category"]: r["max_ever"] for r in hist_rows}
+
+    for row in curr_rows:
+        cat = row["category"]
+        mtd = row["mtd"]
+        max_ever = max_map.get(cat)
+        if max_ever and mtd > max_ever * 1.1:
+            alerts.append(Alert(
+                alert_type="anomaly",
+                severity="high",
+                description=(
+                    f"Record spend: {cat} is at ${mtd:,.0f} this month — "
+                    f"your previous highest was ${max_ever:,.0f}."
+                ),
+            ))
+
+    return alerts
+
+
+# ---------------------------------------------------------------------------
+# 9. Credit Card Balance Alert (Teller)
+# ---------------------------------------------------------------------------
+
+def detect_high_credit_balances() -> list[Alert]:
+    """
+    Alerts when a credit card balance (from Teller) is high relative to its
+    recent history, or when total credit across all cards is elevated.
+    """
+    alerts = []
+    try:
+        with db() as conn:
+            rows = conn.execute(
+                """SELECT ta.name, ta.institution, ta.balance_ledger, ta.balance_available,
+                          ta.subtype, ta.last_synced_at
+                   FROM teller_accounts ta
+                   JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
+                   WHERE te.status = 'active'
+                     AND ta.type = 'credit'"""
+            ).fetchall()
+    except Exception:
+        return alerts
+
+    total_balance = 0.0
+    for row in rows:
+        balance = abs(row["balance_ledger"] or 0)
+        total_balance += balance
+        if balance > 2000:
+            alerts.append(Alert(
+                alert_type="anomaly",
+                severity="medium" if balance < 5000 else "high",
+                description=(
+                    f"Your {row['institution']} {row['name']} credit card balance is ${balance:,.2f}. "
+                    f"Consider paying it down to avoid interest charges."
+                ),
+            ))
+
+    if len(rows) > 1 and total_balance > 5000:
+        alerts.append(Alert(
+            alert_type="anomaly",
+            severity="high",
+            description=(
+                f"Total credit card balance across all cards: ${total_balance:,.2f}. "
+                f"High balances can impact your credit score and accrue interest."
+            ),
+        ))
+
+    return alerts
+
+
+# ---------------------------------------------------------------------------
+# 10. Card Payment Due Date Monitor
 # ---------------------------------------------------------------------------
 
 # Patterns that indicate a card payment due date in raw statement text
@@ -444,11 +658,14 @@ def run_agent() -> list[int]:
     logger.info("[Agent] Running detection modules (data span: %d months)...", months)
 
     all_alerts: list[Alert] = []
-    all_alerts += detect_overspend()
+    all_alerts += detect_spend_pace()
     all_alerts += detect_anomalies()
+    all_alerts += detect_weekly_velocity()
+    all_alerts += detect_all_time_highs()
     all_alerts += detect_recurring_issues()
     all_alerts += detect_duplicates()
     all_alerts += detect_budget_overrun()
+    all_alerts += detect_high_credit_balances()
     all_alerts += detect_card_due_dates()
 
     saved_ids = _save_alerts(all_alerts)
