@@ -70,7 +70,7 @@ export default function AlertsPanel({ alertTypes = [] }: AlertsPanelProps) {
   );
 
   const visibleAlerts = alertTypes.length > 0
-    ? alerts.filter(a => alertTypes.includes((a.alert_type ?? "") as never))
+    ? alerts.filter(a => (alertTypes as string[]).includes(a.alert_type ?? ""))
     : alerts;
   const groups = groupByType(visibleAlerts);
 

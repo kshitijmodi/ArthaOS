@@ -669,10 +669,13 @@ def _auto_create_tasks(alerts: list[Alert]) -> int:
             task_def = None
 
             if alert.alert_type == "overspend" and alert.severity in ("medium", "high"):
-                # Extract category from description
-                import re
-                m = re.search(r"^(\w+(?:\s+\w+)?)(?:\s+spend|\s+:)", alert.description)
-                category = m.group(1).strip() if m else None
+                # "Your Dining spend this month..." → group(1)
+                # "Dining: spent $..." → group(2)
+                m = re.search(
+                    r"^Your (\w+(?:\s+\w+)?) spend|^(\w+(?:\s+\w+)?):",
+                    alert.description,
+                )
+                category = (m.group(1) or m.group(2)).strip() if m else None
                 if category:
                     params_key = json.dumps({"category": category})
                     if ("track_category", params_key) not in existing_keys:
