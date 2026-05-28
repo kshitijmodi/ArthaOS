@@ -643,6 +643,61 @@ def detect_card_due_dates() -> list[Alert]:
 
 
 # ---------------------------------------------------------------------------
+# 11. Goal Risk Detector
+# ---------------------------------------------------------------------------
+
+def detect_goal_risks() -> list[Alert]:
+    """
+    Alerts when an active goal is at risk:
+    - spend_limit goals > 75% used with > 3 days left in period
+    - savings/investment goals < 50% complete with < 30% of period left
+    """
+    alerts = []
+    try:
+        from backend.agent.goals import compute_progress
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT * FROM goals WHERE status = 'active'"
+            ).fetchall()
+    except Exception:
+        return alerts
+
+    for row in rows:
+        goal = compute_progress(dict(row))
+        pct = goal["progress_pct"]
+        days_left = goal.get("days_left")
+        name = goal["name"]
+        target = goal["target_amount"]
+        current = goal["current_amount"]
+
+        if goal["goal_type"] == "spend_limit":
+            if pct >= 90 and (days_left is None or days_left > 2):
+                severity = "high" if pct >= 100 else "medium"
+                status = "exceeded" if pct >= 100 else f"{pct:.0f}% used"
+                alerts.append(Alert(
+                    alert_type="goal_risk",
+                    severity=severity,
+                    description=(
+                        f"Goal at risk: '{name}' — {status} "
+                        f"(${current:,.0f} of ${target:,.0f} limit"
+                        + (f", {days_left}d left" if days_left else "") + ")."
+                    ),
+                ))
+        elif goal["goal_type"] in ("savings", "investment"):
+            if days_left is not None and days_left <= 30 and pct < 70:
+                alerts.append(Alert(
+                    alert_type="goal_risk",
+                    severity="medium",
+                    description=(
+                        f"Goal behind pace: '{name}' — {pct:.0f}% complete "
+                        f"(${current:,.0f} of ${target:,.0f}) with {days_left} days left."
+                    ),
+                ))
+
+    return alerts
+
+
+# ---------------------------------------------------------------------------
 # Main agent run
 # ---------------------------------------------------------------------------
 
@@ -737,6 +792,7 @@ def run_agent() -> list[int]:
     all_alerts += detect_budget_overrun()
     all_alerts += detect_high_credit_balances()
     all_alerts += detect_card_due_dates()
+    all_alerts += detect_goal_risks()
 
     saved_ids = _save_alerts(all_alerts)
     logger.info("[Agent] %d new alerts saved (from %d detected)", len(saved_ids), len(all_alerts))

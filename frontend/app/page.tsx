@@ -10,6 +10,7 @@ import QueryInterface from "@/components/QueryInterface";
 import TransactionTable from "@/components/TransactionTable";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import AlertsPanel from "@/components/AlertsPanel";
+import GoalsPanel from "@/components/GoalsPanel";
 import InvestmentsPanel from "@/components/InvestmentsPanel";
 import InsightsPanel from "@/components/InsightsPanel";
 import IngestionStatus from "@/components/IngestionStatus";
@@ -119,6 +120,15 @@ export default function Page() {
               <p className="text-sm text-tx-2 mt-1">Anomalies, overspends, duplicates and upcoming charges</p>
             </div>
             <AlertsPanel />
+          </div>
+        )}
+        {activeView === "goals" && (
+          <div className="p-6 max-w-[900px] mx-auto">
+            <div className="mb-6">
+              <h1 className="text-xl font-bold text-tx">Goals</h1>
+              <p className="text-sm text-tx-2 mt-1">Spend limits, savings targets and investment milestones</p>
+            </div>
+            <GoalsPanel />
           </div>
         )}
         {activeView === "settings" && (

@@ -134,3 +134,37 @@ export const tellerDisconnect = (enrollment_id: string) =>
 
 export const tellerSyncNow = () =>
   apiFetch("/teller/sync", { method: "POST" });
+
+// Goals
+export interface Goal {
+  id: number;
+  name: string;
+  goal_type: "spend_limit" | "savings" | "investment" | "custom";
+  category: string | null;
+  target_amount: number;
+  current_amount: number;
+  target_date: string | null;
+  period: "monthly" | "yearly" | "one_time";
+  status: "active" | "completed" | "paused" | "abandoned";
+  notes: string | null;
+  progress_pct: number;
+  days_left: number | null;
+  on_track: boolean;
+  created_at: string;
+}
+
+export const getGoals = () =>
+  apiFetch<{ goals: Goal[] }>("/goals");
+
+export const createGoal = (data: {
+  name: string; goal_type: string; category?: string;
+  target_amount: number; target_date?: string; period?: string; notes?: string;
+}) => apiFetch<Goal>("/goals", { method: "POST", body: JSON.stringify(data) });
+
+export const updateGoal = (id: number, data: Partial<{
+  name: string; target_amount: number; target_date: string;
+  period: string; status: string; notes: string;
+}>) => apiFetch<Goal>(`/goals/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+
+export const deleteGoal = (id: number) =>
+  apiFetch(`/goals/${id}`, { method: "DELETE" });

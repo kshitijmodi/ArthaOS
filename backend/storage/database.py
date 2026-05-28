@@ -172,6 +172,23 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_tasks_status   ON scheduled_tasks(status);
         CREATE INDEX IF NOT EXISTS idx_tasks_fire_at  ON scheduled_tasks(fire_at);
 
+        CREATE TABLE IF NOT EXISTS goals (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL,
+            goal_type       TEXT NOT NULL CHECK(goal_type IN ('spend_limit','savings','investment','custom')),
+            category        TEXT,
+            target_amount   REAL NOT NULL,
+            target_date     TEXT,
+            period          TEXT NOT NULL DEFAULT 'monthly' CHECK(period IN ('monthly','yearly','one_time')),
+            status          TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','paused','abandoned')),
+            notes           TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
+        CREATE INDEX IF NOT EXISTS idx_goals_type   ON goals(goal_type);
+
         CREATE TABLE IF NOT EXISTS teller_enrollments (
             enrollment_id   TEXT PRIMARY KEY,
             access_token    TEXT NOT NULL,

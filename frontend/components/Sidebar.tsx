@@ -4,11 +4,11 @@ import { useTheme } from "@/components/ThemeProvider";
 import {
   LayoutDashboard, ArrowLeftRight, BarChart3, TrendingUp,
   MessageCircle, Bell, Settings, ChevronLeft, ChevronRight,
-  Sun, Moon, Zap,
+  Sun, Moon, Zap, Target,
 } from "lucide-react";
 import { useState } from "react";
 
-export type View = "dashboard" | "transactions" | "analytics" | "investments" | "chat" | "alerts" | "settings";
+export type View = "dashboard" | "transactions" | "analytics" | "investments" | "chat" | "alerts" | "goals" | "settings";
 
 interface NavItem { id: View; label: string; icon: React.ReactNode; badge?: number; }
 interface Props { activeView: View; onNavigate: (v: View) => void; alertCount?: number; }
@@ -24,6 +24,7 @@ export default function Sidebar({ activeView, onNavigate, alertCount = 0 }: Prop
     { id: "investments",  label: "Investments",  icon: <TrendingUp size={18} /> },
     { id: "chat",         label: "AI Chat",      icon: <MessageCircle size={18} /> },
     { id: "alerts",       label: "Alerts",       icon: <Bell size={18} />, badge: alertCount },
+    { id: "goals",        label: "Goals",        icon: <Target size={18} /> },
   ];
 
   return (

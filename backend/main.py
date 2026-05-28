@@ -389,6 +389,90 @@ def dismiss_charge_alert(alert_id: int):
     return {"status": "dismissed"}
 
 
+# ---------------------------------------------------------------------------
+# Goals
+# ---------------------------------------------------------------------------
+
+class GoalCreateRequest(BaseModel):
+    name: str
+    goal_type: str
+    category: Optional[str] = None
+    target_amount: float
+    target_date: Optional[str] = None
+    period: str = "monthly"
+    notes: Optional[str] = None
+
+class GoalUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    target_amount: Optional[float] = None
+    target_date: Optional[str] = None
+    period: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+@app.get("/goals")
+def list_goals():
+    from backend.agent.goals import compute_progress
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM goals WHERE status != 'abandoned' ORDER BY created_at DESC"
+        ).fetchall()
+    goals = [compute_progress(dict(r)) for r in rows]
+    return {"goals": goals}
+
+@app.post("/goals")
+def create_goal(req: GoalCreateRequest):
+    allowed_types = {"spend_limit", "savings", "investment", "custom"}
+    if req.goal_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"goal_type must be one of: {', '.join(sorted(allowed_types))}")
+    with db() as conn:
+        cur = conn.execute(
+            """INSERT INTO goals (name, goal_type, category, target_amount, target_date, period, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (req.name, req.goal_type, req.category, req.target_amount,
+             req.target_date, req.period, req.notes),
+        )
+        goal_id = cur.lastrowid
+        row = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+    from backend.agent.goals import compute_progress
+    return compute_progress(dict(row))
+
+@app.patch("/goals/{goal_id}")
+def update_goal(goal_id: int, req: GoalUpdateRequest):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Goal not found")
+        fields, params = [], []
+        if req.name is not None:
+            fields.append("name = ?"); params.append(req.name)
+        if req.target_amount is not None:
+            fields.append("target_amount = ?"); params.append(req.target_amount)
+        if req.target_date is not None:
+            fields.append("target_date = ?"); params.append(req.target_date)
+        if req.period is not None:
+            fields.append("period = ?"); params.append(req.period)
+        if req.status is not None:
+            fields.append("status = ?"); params.append(req.status)
+        if req.notes is not None:
+            fields.append("notes = ?"); params.append(req.notes)
+        if fields:
+            fields.append("updated_at = datetime('now')")
+            params.append(goal_id)
+            conn.execute(f"UPDATE goals SET {', '.join(fields)} WHERE id = ?", params)
+        row = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+    from backend.agent.goals import compute_progress
+    return compute_progress(dict(row))
+
+@app.delete("/goals/{goal_id}")
+def delete_goal(goal_id: int):
+    with db() as conn:
+        result = conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Goal not found")
+    return {"status": "deleted"}
+
+
 @app.get("/alerts/stats")
 def alert_stats():
     with db() as conn:
