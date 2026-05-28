@@ -369,8 +369,8 @@ def detect_spend_pace() -> list[Alert]:
     day_of_month = today.day
     days_in_month = 30
 
-    if day_of_month < 5:
-        return alerts  # too early in month to project meaningfully
+    if day_of_month < 5 or day_of_month > 25:
+        return alerts  # too early or too late to project meaningfully
 
     with db() as conn:
         curr_rows = conn.execute(
@@ -405,10 +405,14 @@ def detect_spend_pace() -> list[Alert]:
         avg = hist["avg"]
         max_ever = hist["max"]
 
+        # Skip small categories — not worth alerting on $50 overspends
+        if avg < 200:
+            continue
+
         days_left = days_in_month - day_of_month
         over_avg_pct = round((projected / avg - 1) * 100)
 
-        if projected > avg * (1 + OVERSPEND_THRESHOLD):
+        if projected > avg * 1.40:  # 40% over average to reduce noise
             is_record = projected > max_ever
             severity = "high" if is_record or over_avg_pct > 75 else "medium"
             record_note = " — that would be your highest ever." if is_record else "."
