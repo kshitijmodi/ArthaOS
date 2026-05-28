@@ -1,19 +1,22 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Bell, X, Clock, Copy, TrendingUp, AlertTriangle, Zap } from "lucide-react";
+import { Bell, X, Clock, Copy, TrendingUp, AlertTriangle, Zap, BarChart2, CreditCard, RefreshCw } from "lucide-react";
 import { getAlerts, dismissAlert, snoozeAlert, Alert } from "@/lib/api";
 import { SEVERITY_COLORS, formatDate, cn } from "@/lib/utils";
 import { useAlertSocket } from "@/hooks/useWebSocket";
 
 const ALERT_TYPE_META: Record<string, { label: string; icon: React.ReactNode }> = {
-  duplicate_charge: { label: "Duplicate Charges", icon: <Copy size={13} /> },
-  interest_fee:     { label: "Interest Fees",      icon: <TrendingUp size={13} /> },
-  late_fee:         { label: "Late Fees",           icon: <Zap size={13} /> },
-  suspicious_charge:{ label: "Suspicious Charges", icon: <AlertTriangle size={13} /> },
+  overspend:        { label: "Overspend",          icon: <TrendingUp size={13} /> },
+  anomaly:          { label: "Anomalies",           icon: <AlertTriangle size={13} /> },
+  duplicate:        { label: "Duplicate Charges",   icon: <Copy size={13} /> },
+  budget_overrun:   { label: "Budget Overrun",      icon: <BarChart2 size={13} /> },
+  card_due:         { label: "Card Payments Due",   icon: <CreditCard size={13} /> },
+  missing_charge:   { label: "Missing Charges",     icon: <Zap size={13} /> },
+  recurring_change: { label: "Recurring Changes",   icon: <RefreshCw size={13} /> },
 };
 
 function groupByType(alerts: Alert[]): [string, Alert[]][] {
-  const order = ["duplicate_charge", "suspicious_charge", "late_fee", "interest_fee"];
+  const order = ["anomaly", "duplicate", "overspend", "budget_overrun", "card_due", "missing_charge", "recurring_change"];
   const map = new Map<string, Alert[]>();
   for (const a of alerts) {
     const key = a.alert_type ?? "other";
@@ -25,13 +28,6 @@ function groupByType(alerts: Alert[]): [string, Alert[]][] {
   for (const [k, v] of map) if (!order.includes(k)) sorted.push([k, v]);
   return sorted;
 }
-
-const ALERT_TYPE_FILTER_MAP: Record<string, string> = {
-  duplicate: "duplicate_charge",
-  interest:  "interest_fee",
-  late_fee:  "late_fee",
-  suspicious: "suspicious_charge",
-};
 
 interface AlertsPanelProps {
   alertTypes?: string[];
@@ -74,7 +70,7 @@ export default function AlertsPanel({ alertTypes = [] }: AlertsPanelProps) {
   );
 
   const visibleAlerts = alertTypes.length > 0
-    ? alerts.filter(a => alertTypes.map(k => ALERT_TYPE_FILTER_MAP[k]).includes(a.alert_type ?? ""))
+    ? alerts.filter(a => alertTypes.includes((a.alert_type ?? "") as never))
     : alerts;
   const groups = groupByType(visibleAlerts);
 

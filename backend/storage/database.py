@@ -148,6 +148,30 @@ def init_db():
             UNIQUE(as_of_date, ticker, account, source_file)
         );
 
+        CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            -- what to do
+            task_type       TEXT NOT NULL,   -- 'track_category','track_total','monitor_investments','custom'
+            description     TEXT NOT NULL,   -- human-readable summary of the task
+            params          TEXT NOT NULL DEFAULT '{}',  -- JSON: category, threshold, metric, etc.
+            -- when to fire
+            fire_at         TEXT NOT NULL,   -- ISO datetime when task should next execute
+            repeat_interval TEXT,            -- NULL=one-shot, 'daily','hourly','30min'
+            -- lifecycle
+            status          TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','running','completed','failed','cancelled')),
+            -- context
+            initiated_by    TEXT NOT NULL DEFAULT 'user'
+                            CHECK(initiated_by IN ('user','agent')),
+            snapshot        TEXT,            -- JSON: data captured at task creation time
+            result          TEXT,            -- JSON: result after execution
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at    TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tasks_status   ON scheduled_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_fire_at  ON scheduled_tasks(fire_at);
+
         CREATE TABLE IF NOT EXISTS teller_enrollments (
             enrollment_id   TEXT PRIMARY KEY,
             access_token    TEXT NOT NULL,

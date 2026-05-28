@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronDown, SlidersHorizontal, X, Bell } from "lucide-react";
 import { cn, CATEGORIES } from "@/lib/utils";
 
-export type AlertType = "duplicate" | "interest" | "late_fee" | "suspicious";
+export type AlertType = "overspend" | "anomaly" | "duplicate" | "budget_overrun" | "card_due" | "recurring_change";
 
 export interface FilterState {
   period: "day" | "week" | "month" | "year" | "all";
@@ -22,10 +22,12 @@ export const defaultFilters: FilterState = {
 };
 
 const ALERT_TYPES: { key: AlertType; label: string }[] = [
-  { key: "duplicate",  label: "Duplicate Charges" },
-  { key: "interest",   label: "Interest Fees"      },
-  { key: "late_fee",   label: "Late Fees"           },
-  { key: "suspicious", label: "Suspicious"          },
+  { key: "overspend",        label: "Overspend"        },
+  { key: "anomaly",          label: "Anomalies"        },
+  { key: "duplicate",        label: "Duplicates"       },
+  { key: "budget_overrun",   label: "Budget Overrun"   },
+  { key: "card_due",         label: "Card Due"         },
+  { key: "recurring_change", label: "Recurring Changes"},
 ];
 
 const PERIODS: { key: FilterState["period"]; label: string }[] = [

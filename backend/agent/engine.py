@@ -646,6 +646,69 @@ def detect_card_due_dates() -> list[Alert]:
 # Main agent run
 # ---------------------------------------------------------------------------
 
+def _auto_create_tasks(alerts: list[Alert]) -> int:
+    """
+    Mode 2: For notable alerts, auto-create monitoring tasks so the agent
+    follows up without the user having to ask.
+    Returns the count of tasks created.
+    """
+    created = 0
+    try:
+        from backend.agent.task_parser import build_scheduled_task, save_task
+        with db() as conn:
+            existing = conn.execute(
+                """SELECT task_type, params FROM scheduled_tasks
+                   WHERE status IN ('pending','running')
+                     AND initiated_by = 'agent'"""
+            ).fetchall()
+        existing_keys = {
+            (r["task_type"], r["params"]) for r in existing
+        }
+
+        for alert in alerts:
+            task_def = None
+
+            if alert.alert_type == "overspend" and alert.severity in ("medium", "high"):
+                # Extract category from description
+                import re
+                m = re.search(r"^(\w+(?:\s+\w+)?)(?:\s+spend|\s+:)", alert.description)
+                category = m.group(1).strip() if m else None
+                if category:
+                    params_key = json.dumps({"category": category})
+                    if ("track_category", params_key) not in existing_keys:
+                        task_def = {
+                            "task_type": "track_category",
+                            "description": f"Agent: Monitor {category} overspend for 7 days",
+                            "params": {"category": category},
+                            "duration_days": 7,
+                            "repeat_interval": None,
+                        }
+
+            elif alert.alert_type == "anomaly" and alert.severity == "high":
+                # Schedule a balance/spending check in 3 days
+                params_key = json.dumps({"summary_type": "all"})
+                if ("track_total", params_key) not in existing_keys:
+                    task_def = {
+                        "task_type": "track_total",
+                        "description": "Agent: Follow-up spending check after anomaly detection",
+                        "params": {"summary_type": "all"},
+                        "duration_days": 3,
+                        "repeat_interval": None,
+                    }
+
+            if task_def:
+                task_row = build_scheduled_task(task_def, initiated_by="agent")
+                save_task(task_row)
+                existing_keys.add((task_def["task_type"], json.dumps(task_def["params"])))
+                created += 1
+                logger.info("[Agent] Auto-created task: %s", task_def["description"])
+
+    except Exception as exc:
+        logger.warning("[Agent] Auto-task creation failed: %s", exc)
+
+    return created
+
+
 def run_agent() -> list[int]:
     """
     Run all detection modules and persist new alerts.
@@ -674,6 +737,13 @@ def run_agent() -> list[int]:
 
     saved_ids = _save_alerts(all_alerts)
     logger.info("[Agent] %d new alerts saved (from %d detected)", len(saved_ids), len(all_alerts))
+
+    # Mode 2: auto-create follow-up tasks for notable alerts
+    if all_alerts:
+        n = _auto_create_tasks(all_alerts)
+        if n:
+            logger.info("[Agent] Auto-created %d follow-up task(s)", n)
+
     return saved_ids
 
 
@@ -701,6 +771,11 @@ _FINANCE_COMMANDS = {
     "help":      "help",
     "balance":   "balance",
     "balances":  "balance",
+    "track":     "track",
+    "monitor":   "track",
+    "watch":     "track",
+    "tasks":     "tasks",
+    "task":      "tasks",
 }
 
 _BALANCE_KEYWORDS = re.compile(
@@ -737,7 +812,14 @@ _HELP_TEXT = (
     "  recurring  — check recurring charge changes\n"
     "  due        — check upcoming card due dates\n"
     "  run        — run all detection modules now\n"
+    "  track      — schedule a monitoring task (natural language)\n"
+    "  tasks      — list your active scheduled tasks\n"
     "  help       — show this message\n\n"
+    "Track examples:\n"
+    "  track my dining spend for 3 days\n"
+    "  monitor investments for 1 hour\n"
+    "  alert me if shopping exceeds $200 today\n"
+    "  summarize my spending every morning\n\n"
     "Or ask naturally: 'what's my Wells Fargo balance?'"
 )
 
@@ -833,6 +915,92 @@ def _handle_balance_query(query: str) -> dict:
     }
 
 
+def _handle_track_command(query: str) -> dict:
+    """Parse a natural language track/monitor request and schedule it."""
+    # Strip the leading command word (track/monitor/watch)
+    tokens = query.strip().split()
+    task_query = " ".join(tokens[1:]) if len(tokens) > 1 else query
+
+    if not task_query:
+        return {
+            "answer": (
+                "What would you like me to track? Examples:\n"
+                "  track my dining spend for 3 days\n"
+                "  monitor investments for 1 hour\n"
+                "  alert me if shopping exceeds $200 today\n"
+                "  summarize my spending every morning"
+            ),
+            "low_confidence": False,
+            "sources": [],
+        }
+
+    try:
+        from backend.agent.task_parser import parse_task, build_scheduled_task, save_task
+        parsed = parse_task(task_query)
+        if not parsed:
+            return {
+                "answer": "I couldn't understand that task. Try: 'track dining spend for 3 days' or 'monitor investments for 1 hour'.",
+                "low_confidence": True,
+                "sources": [],
+            }
+
+        task_row = build_scheduled_task(parsed, initiated_by="user")
+        task_id = save_task(task_row)
+
+        fire_at = task_row["fire_at"]
+        repeat = task_row.get("repeat_interval")
+        repeat_str = f" (repeats {repeat})" if repeat else ""
+
+        return {
+            "answer": (
+                f"✅ Task scheduled!\n\n"
+                f"*{task_row['description']}*\n"
+                f"I'll report back at: {fire_at} UTC{repeat_str}\n"
+                f"Task ID: #{task_id}"
+            ),
+            "low_confidence": False,
+            "sources": [],
+        }
+    except Exception as exc:
+        logger.exception("[Finance] Track command failed: %s", exc)
+        return {
+            "answer": f"Failed to schedule task: {exc}",
+            "low_confidence": True,
+            "sources": [],
+        }
+
+
+def _handle_list_tasks() -> dict:
+    """List active scheduled tasks."""
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT id, description, fire_at, repeat_interval, status, initiated_by
+               FROM scheduled_tasks
+               WHERE status IN ('pending', 'running')
+               ORDER BY fire_at ASC
+               LIMIT 10"""
+        ).fetchall()
+
+    if not rows:
+        return {
+            "answer": "No active tasks. Use 'track <what> for <duration>' to schedule one.",
+            "low_confidence": False,
+            "sources": [],
+        }
+
+    lines = ["*Active Tasks:*\n"]
+    for r in rows:
+        by = "🤖 auto" if r["initiated_by"] == "agent" else "👤 you"
+        repeat = f" ↻ {r['repeat_interval']}" if r["repeat_interval"] else ""
+        lines.append(f"#{r['id']} [{by}] {r['description']}\n   fires: {r['fire_at']}{repeat}")
+
+    return {
+        "answer": "\n".join(lines),
+        "low_confidence": False,
+        "sources": [],
+    }
+
+
 def _dispatch_finance_command(query: str) -> dict:
     tokens = query.strip().lower().split()
     sub = tokens[0] if tokens else "help"
@@ -860,6 +1028,12 @@ def _dispatch_finance_command(query: str) -> dict:
 
     if action == "balance":
         return _handle_balance_query(query)
+
+    if action == "track":
+        return _handle_track_command(query)
+
+    if action == "tasks":
+        return _handle_list_tasks()
 
     if action == "run_all":
         months = _months_of_data()
