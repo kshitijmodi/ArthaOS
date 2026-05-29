@@ -5,51 +5,68 @@ and upserts them into the ArthaOS transactions table.
 Two-phase design to avoid SQLite "database is locked":
   Phase 1 — fetch from Teller API + categorize (all network I/O, NO DB connection held)
   Phase 2 — one fast batch write to DB (pure SQL, no network calls)
+
+Sign resolution is account-type aware:
+  - Credit card / credit accounts: negative amount = payment/refund (credit)
+  - Depository (checking/savings): trust Teller's type field exclusively
+    (amounts can be positive or negative depending on the bank; the type field
+    is Teller's normalised "credit = money in, debit = money out" indicator)
 """
 import logging
 from datetime import datetime, timezone
 
 from backend.storage.database import db, is_duplicate_transaction
 from backend.teller.client import get_accounts, get_transactions, get_account_balances
-from backend.processing.categorizer import categorize, get_valid_categories
+from backend.processing.categorizer import categorize_static
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_tx_type(tx: dict) -> tuple[str, float]:
+def _resolve_tx_type(tx: dict, account_type: str = "") -> tuple[str, float]:
     """
     Determine (tx_type, amount) from a raw Teller transaction dict.
 
-    Teller uses two signals:
-      - tx["type"]: "debit" | "credit"  (direction of cash flow)
-      - tx["amount"]: positive for debits, NEGATIVE for credits on CC accounts
+    Teller's stated convention (from their docs):
+      type="credit"  — money flowing INTO the account (deposit, refund, payment received)
+      type="debit"   — money flowing OUT of the account (purchase, withdrawal, payment made)
 
-    The sign of the amount is the ground truth.  Teller sometimes returns
-    type="debit" even for CC credits (payments / refunds), so we treat a
-    negative amount as authoritative and override the type field when they
-    contradict each other.
+    For credit card accounts Teller sometimes contradicts itself: a CC payment
+    (money going to the card company) can arrive with type="debit" but a
+    NEGATIVE amount. We handle that special case here.
+
+    For depository (checking/savings) accounts we trust the type field only —
+    the amount sign convention varies by bank and should not be used to override.
     """
     raw = float(tx.get("amount", 0))
     teller_type = (tx.get("type", "") or "").lower()
-    if raw < 0 or teller_type == "credit":
-        return "credit", abs(raw)
-    return "debit", abs(raw)
+    is_credit_card = "credit" in account_type.lower()
+
+    if is_credit_card:
+        # CC: negative amount = payment/refund to card (credit); also honour type="credit"
+        if raw < 0 or teller_type == "credit":
+            return "credit", abs(raw)
+        return "debit", abs(raw)
+    else:
+        # Depository: trust Teller's type field only — do NOT use amount sign override
+        if teller_type == "credit":
+            return "credit", abs(raw)
+        return "debit", abs(raw)
 
 
-def _prepare_tx(tx: dict, acc_display: str) -> dict:
+def _prepare_tx(tx: dict, acc_display: str, account_type: str = "") -> dict:
     """
     Pre-process one Teller transaction dict into a flat dict ready for DB insert.
-    Categorization happens here (outside any DB lock) using keyword_only=True
-    to avoid Groq rate-limiting stalling an open write transaction.
+
+    Categorization uses categorize_static() — static keyword rules only.
+    This prevents learned rules (derived from PDF corrections) from
+    contaminating Teller transaction categories at import time.
     """
-    tx_type, amount = _resolve_tx_type(tx)
+    tx_type, amount = _resolve_tx_type(tx, account_type)
     description = (
         tx.get("description", "")
         or (tx.get("details", {}) or {}).get("counterparty", {}).get("name", "")
     )
-    teller_cat = ((tx.get("details", {}) or {}).get("category", "") or "").strip()
-    valid_cats = get_valid_categories()
-    category = teller_cat if teller_cat in valid_cats else categorize(description, keyword_only=True)
+    category = categorize_static(description)
     date = tx.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     return {
         "source_file": f"teller:{tx['id']}",
@@ -110,6 +127,7 @@ def sync_enrollment(enrollment_id: str, access_token: str, institution_name: str
     for account in accounts:
         account_id = account["id"]
         acc_display = account.get("name", "")
+        account_type = account.get("type", "")
 
         balances: dict = {}
         try:
@@ -121,7 +139,7 @@ def sync_enrollment(enrollment_id: str, access_token: str, institution_name: str
         try:
             txns = get_transactions(access_token, account_id)
             for tx in txns:
-                prepared_txns.append(_prepare_tx(tx, acc_display))
+                prepared_txns.append(_prepare_tx(tx, acc_display, account_type))
         except Exception as exc:
             logger.warning("[TellerSync] Transaction fetch failed for %s: %s", account_id, exc)
 

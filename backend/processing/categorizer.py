@@ -198,6 +198,18 @@ def categorize(description: str, keyword_only: bool = False) -> str:
     return _llm_categorize(description)
 
 
+def categorize_static(description: str) -> str:
+    """
+    Categorize using ONLY static keyword rules — no user corrections, no learned
+    rules, no LLM.  Use this during data import (Teller sync, PDF ingestion) so
+    learned rules from one source can't contaminate another source's categories.
+    User corrections applied afterward (via re-categorize or manual edit) are
+    always respected because they have the highest priority in categorize().
+    """
+    rule_cat = _rule_match(description)
+    return rule_cat if rule_cat else "Miscellaneous"
+
+
 def apply_correction(transaction_id: int, new_category: str) -> bool:
     """Persist a single user category correction and invalidate learned rules."""
     if new_category not in get_valid_categories():
