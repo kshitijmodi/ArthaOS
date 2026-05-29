@@ -1,6 +1,10 @@
 """
 Teller sync — pulls accounts + transactions for all enrolled institutions
 and upserts them into the ArthaOS transactions table.
+
+Two-phase design to avoid SQLite "database is locked":
+  Phase 1 — fetch from Teller API + categorize (all network I/O, NO DB connection held)
+  Phase 2 — one fast batch write to DB (pure SQL, no network calls)
 """
 import logging
 from datetime import datetime, timezone
@@ -10,6 +14,7 @@ from backend.teller.client import get_accounts, get_transactions, get_account_ba
 from backend.processing.categorizer import categorize, get_valid_categories
 
 logger = logging.getLogger(__name__)
+
 
 def _resolve_tx_type(tx: dict) -> tuple[str, float]:
     """
@@ -31,26 +36,44 @@ def _resolve_tx_type(tx: dict) -> tuple[str, float]:
     return "debit", abs(raw)
 
 
-def _upsert_transaction(conn, tx: dict, institution: str, account_name: str = ""):
+def _prepare_tx(tx: dict, acc_display: str) -> dict:
     """
-    Insert a Teller transaction.
-    Skips if already stored by Teller ID (same-source dedup)
-    OR if a cross-source duplicate exists (same date+amount+type+similar description).
+    Pre-process one Teller transaction dict into a flat dict ready for DB insert.
+    Categorization happens here (outside any DB lock) using keyword_only=True
+    to avoid Groq rate-limiting stalling an open write transaction.
     """
     tx_type, amount = _resolve_tx_type(tx)
-    description = tx.get("description", "") or tx.get("details", {}).get("counterparty", {}).get("name", "")
-    teller_cat = (tx.get("details", {}).get("category", "") or "").strip()
-    category = teller_cat if teller_cat in get_valid_categories() else categorize(description)
+    description = (
+        tx.get("description", "")
+        or (tx.get("details", {}) or {}).get("counterparty", {}).get("name", "")
+    )
+    teller_cat = ((tx.get("details", {}) or {}).get("category", "") or "").strip()
+    valid_cats = get_valid_categories()
+    category = teller_cat if teller_cat in valid_cats else categorize(description, keyword_only=True)
     date = tx.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-    source_file = f"teller:{tx['id']}"
+    return {
+        "source_file": f"teller:{tx['id']}",
+        "date": date,
+        "description": description,
+        "amount": amount,
+        "tx_type": tx_type,
+        "category": category,
+        "acc_display": acc_display,
+    }
 
-    # Same-source dedup (exact Teller ID match)
-    if conn.execute("SELECT 1 FROM transactions WHERE source_file = ?", (source_file,)).fetchone():
+
+def _insert_prepared_tx(conn, row: dict, institution: str) -> bool:
+    """Insert a pre-categorized transaction. Returns True if a new row was inserted."""
+    if conn.execute(
+        "SELECT 1 FROM transactions WHERE source_file = ?", (row["source_file"],)
+    ).fetchone():
         return False
 
-    # Cross-source dedup (PDF or other source already has this transaction)
-    if is_duplicate_transaction(conn, date, amount, tx_type, description):
-        logger.debug("[TellerSync] Cross-source duplicate skipped: %s %s $%.2f", date, description, amount)
+    if is_duplicate_transaction(conn, row["date"], row["amount"], row["tx_type"], row["description"]):
+        logger.debug(
+            "[TellerSync] Cross-source duplicate skipped: %s %s $%.2f",
+            row["date"], row["description"], row["amount"],
+        )
         return False
 
     conn.execute(
@@ -58,7 +81,11 @@ def _upsert_transaction(conn, tx: dict, institution: str, account_name: str = ""
            (date, description, amount, currency, transaction_type, category,
             category_source, source_file, confidence_score, institution, account_name)
            VALUES (?, ?, ?, ?, ?, ?, 'auto', ?, 0.85, ?, ?)""",
-        (date, description, amount, "USD", tx_type, category, source_file, institution, account_name),
+        (
+            row["date"], row["description"], row["amount"], "USD",
+            row["tx_type"], row["category"], row["source_file"],
+            institution, row["acc_display"],
+        ),
     )
     return True
 
@@ -68,67 +95,82 @@ def sync_enrollment(enrollment_id: str, access_token: str, institution_name: str
     Pull all accounts + transactions for one Teller enrollment.
     Returns counts of new transactions and accounts synced.
     """
-    new_txns = 0
-    accounts_synced = 0
-
+    # ------------------------------------------------------------------ #
+    # Phase 1: fetch everything from Teller + pre-categorize              #
+    #          No DB connection is held during this phase.                #
+    # ------------------------------------------------------------------ #
     try:
         accounts = get_accounts(access_token)
     except Exception as exc:
         logger.error("[TellerSync] Failed to fetch accounts for %s: %s", institution_name, exc)
         return {"new_transactions": 0, "accounts": 0, "error": str(exc)}
 
+    account_payloads = []  # [(account_dict, balances_dict, [prepared_tx, ...])]
+
+    for account in accounts:
+        account_id = account["id"]
+        acc_display = account.get("name", "")
+
+        balances: dict = {}
+        try:
+            balances = get_account_balances(access_token, account_id)
+        except Exception as exc:
+            logger.warning("[TellerSync] Balance fetch failed for %s: %s", account_id, exc)
+
+        prepared_txns: list[dict] = []
+        try:
+            txns = get_transactions(access_token, account_id)
+            for tx in txns:
+                prepared_txns.append(_prepare_tx(tx, acc_display))
+        except Exception as exc:
+            logger.warning("[TellerSync] Transaction fetch failed for %s: %s", account_id, exc)
+
+        account_payloads.append((account, balances, prepared_txns))
+
+    # ------------------------------------------------------------------ #
+    # Phase 2: write everything to DB in a single short-lived connection  #
+    #          Pure SQL — no network calls, no Groq retries.              #
+    # ------------------------------------------------------------------ #
+    new_txns = 0
+    accounts_synced = len(account_payloads)
+
     with db() as conn:
-        for account in accounts:
+        for account, balances, prepared_txns in account_payloads:
             account_id = account["id"]
-            accounts_synced += 1
 
-            # Update balance snapshot and store history
-            try:
-                balances = get_account_balances(access_token, account_id)
+            if balances:
                 bal_available = balances.get("available")
-                bal_ledger    = balances.get("ledger")
-                conn.execute(
-                    """INSERT INTO teller_accounts
-                       (enrollment_id, account_id, institution, name, type, subtype,
-                        currency, balance_available, balance_ledger, last_synced_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                       ON CONFLICT(account_id) DO UPDATE SET
-                         balance_available = excluded.balance_available,
-                         balance_ledger    = excluded.balance_ledger,
-                         last_synced_at    = CURRENT_TIMESTAMP""",
-                    (
-                        enrollment_id,
-                        account_id,
-                        institution_name,
-                        account.get("name", ""),
-                        account.get("type", ""),
-                        account.get("subtype", ""),
-                        account.get("currency", "USD"),
-                        bal_available,
-                        bal_ledger,
-                    ),
-                )
-                # Store a timestamped snapshot for historical period lookups
-                conn.execute(
-                    """INSERT INTO teller_balance_history
-                       (account_id, balance_available, balance_ledger)
-                       VALUES (?, ?, ?)""",
-                    (account_id, bal_available, bal_ledger),
-                )
-            except Exception as exc:
-                logger.warning("[TellerSync] Balance fetch failed for %s: %s", account_id, exc)
+                bal_ledger = balances.get("ledger")
+                try:
+                    conn.execute(
+                        """INSERT INTO teller_accounts
+                           (enrollment_id, account_id, institution, name, type, subtype,
+                            currency, balance_available, balance_ledger, last_synced_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                           ON CONFLICT(account_id) DO UPDATE SET
+                             balance_available = excluded.balance_available,
+                             balance_ledger    = excluded.balance_ledger,
+                             last_synced_at    = CURRENT_TIMESTAMP""",
+                        (
+                            enrollment_id, account_id, institution_name,
+                            account.get("name", ""), account.get("type", ""),
+                            account.get("subtype", ""), account.get("currency", "USD"),
+                            bal_available, bal_ledger,
+                        ),
+                    )
+                    conn.execute(
+                        """INSERT INTO teller_balance_history
+                           (account_id, balance_available, balance_ledger)
+                           VALUES (?, ?, ?)""",
+                        (account_id, bal_available, bal_ledger),
+                    )
+                except Exception as exc:
+                    logger.warning("[TellerSync] Balance write failed for %s: %s", account_id, exc)
 
-            # Pull transactions
-            try:
-                txns = get_transactions(access_token, account_id)
-                acc_display = account.get("name", "")
-                for tx in txns:
-                    if _upsert_transaction(conn, tx, institution_name, acc_display):
-                        new_txns += 1
-            except Exception as exc:
-                logger.warning("[TellerSync] Transaction fetch failed for %s: %s", account_id, exc)
+            for row in prepared_txns:
+                if _insert_prepared_tx(conn, row, institution_name):
+                    new_txns += 1
 
-        # Update last_synced_at on enrollment
         conn.execute(
             "UPDATE teller_enrollments SET last_synced_at = CURRENT_TIMESTAMP WHERE enrollment_id = ?",
             (enrollment_id,),

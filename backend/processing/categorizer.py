@@ -171,10 +171,14 @@ def _llm_categorize(description: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def categorize(description: str) -> str:
+def categorize(description: str, keyword_only: bool = False) -> str:
     """
     Categorize a transaction description.
     Order: user correction → learned rules → keyword rules → LLM fallback.
+
+    Pass keyword_only=True to skip the LLM fallback (avoids Groq rate limiting
+    during bulk sync operations where holding a DB lock during retries causes
+    "database is locked" errors for all other writers).
     """
     user_cat = _get_user_correction(description)
     if user_cat:
@@ -187,6 +191,9 @@ def categorize(description: str) -> str:
     rule_cat = _rule_match(description)
     if rule_cat:
         return rule_cat
+
+    if keyword_only:
+        return "Miscellaneous"
 
     return _llm_categorize(description)
 
