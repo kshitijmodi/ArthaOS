@@ -341,6 +341,7 @@ def accounts_summary(as_of: Optional[str] = None):
 
             bank_balance = round(period_balance("lower(a.type) IN ('depository','checking','savings')"), 2)
             cc_balance   = round(period_balance("lower(a.type) IN ('credit','credit_card')"), 2)
+            loan_balance = round(period_balance("lower(a.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"), 2)
         else:
             bank_row = conn.execute(
                 """SELECT COALESCE(SUM(COALESCE(balance_available, balance_ledger, 0)), 0) as total
@@ -353,6 +354,12 @@ def accounts_summary(as_of: Optional[str] = None):
                    FROM teller_accounts WHERE lower(type) IN ('credit','credit_card')"""
             ).fetchone()
             cc_balance = round(cc_row["total"], 2)
+
+            loan_row = conn.execute(
+                """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
+                   FROM teller_accounts WHERE lower(type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"""
+            ).fetchone()
+            loan_balance = round(loan_row["total"], 2)
 
         # 401K = Fidelity holdings (always latest snapshot)
         fidelity_row = conn.execute(
@@ -376,11 +383,12 @@ def accounts_summary(as_of: Optional[str] = None):
         ).fetchone()
         portfolio_stocks = round(stocks_row["total"], 2)
 
-    net_worth = round(bank_balance + portfolio_401k + portfolio_stocks - cc_balance, 2)
+    net_worth = round(bank_balance + portfolio_401k + portfolio_stocks - cc_balance - loan_balance, 2)
 
     return {
         "bank_balance": bank_balance,
         "cc_balance": cc_balance,
+        "loan_balance": loan_balance,
         "portfolio_401k": portfolio_401k,
         "portfolio_stocks": portfolio_stocks,
         "net_worth": net_worth,

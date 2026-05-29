@@ -180,6 +180,7 @@ export const deleteGoal = (id: number) =>
 export interface AccountsSummary {
   bank_balance: number;
   cc_balance: number;
+  loan_balance: number;
   portfolio_401k: number;
   portfolio_stocks: number;
   net_worth: number;

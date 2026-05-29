@@ -2,7 +2,7 @@
 import { useMemo, useEffect, useState } from "react";
 import {
   ArrowUpRight, ArrowDownRight,
-  Building2, CreditCard, BarChart3, PiggyBank, Scale,
+  Building2, CreditCard, BarChart3, PiggyBank, Scale, Car,
 } from "lucide-react";
 import { Transaction, getAccountsSummary, AccountsSummary } from "@/lib/api";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -119,6 +119,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
 
   const nw = accounts?.net_worth ?? 0;
   const ccHigh = (accounts?.cc_balance ?? 0) > 5000;
+  const hasLoans = (accounts?.loan_balance ?? 0) > 0;
   const isPeriod = !!asOf;
 
   return (
@@ -161,6 +162,23 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
           loading={acctLoading}
         />
       </div>
+
+      {/* Loans row — only shown when a loan account is connected */}
+      {hasLoans && (
+        <>
+          <SectionLabel>Liabilities</SectionLabel>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Card
+              label="Loans Outstanding"
+              value={accounts ? formatCurrency(accounts.loan_balance) : "—"}
+              sub="auto · mortgage · personal"
+              icon={<Car size={14} className="text-expense" />}
+              iconBg="bg-expense/10" border="border-expense/20 hover:border-expense/40" accent="text-expense"
+              loading={acctLoading}
+            />
+          </div>
+        </>
+      )}
 
       {/* Row 2 — portfolio snapshot (not period-filtered) */}
       <SectionLabel>Portfolio snapshot</SectionLabel>
