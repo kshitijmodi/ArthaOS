@@ -298,6 +298,7 @@ DEFAULT_CATEGORIES = [
     ("Investments",     "robinhood,schwab,fidelity,vanguard,axis direct,zerodha,groww,mutual fund,stock,etf,brokerage", 1),
     ("Income",          "salary,neft cr,rtgs cr,credit salary,payroll,stipend,paylocity,direct deposit", 1),
     ("Fees & Interest", "late fee,interest charge,finance charge,foreign transaction,forex fee,annual fee,overdraft,penalty,service charge", 1),
+    ("Transfer",        "payment thank you,autopay,bill pay,balance payment,transfer,zelle,venmo,paypal,ach payment,wire transfer,cc payment,card payment,citi payment,chase payment,amex payment,capital one payment,wells fargo payment,bank of america payment", 1),
     ("Miscellaneous",   "", 1),
 ]
 
@@ -315,6 +316,13 @@ def _run_migrations():
                 conn.execute(sql)
             except Exception:
                 pass  # column already exists
+        # Ensure Transfer category exists on databases seeded before it was added
+        conn.execute(
+            """INSERT OR IGNORE INTO categories (name, keywords, is_system)
+               VALUES ('Transfer',
+                       'payment thank you,autopay,bill pay,balance payment,transfer,zelle,venmo,paypal,ach payment,wire transfer,cc payment,card payment,citi payment,chase payment,amex payment,capital one payment,wells fargo payment,bank of america payment',
+                       1)"""
+        )
 
 
 def _seed_categories():

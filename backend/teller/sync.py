@@ -11,10 +11,24 @@ from backend.processing.categorizer import categorize, get_valid_categories
 
 logger = logging.getLogger(__name__)
 
-TELLER_TX_TYPE_MAP = {
-    "debit":  "debit",
-    "credit": "credit",
-}
+def _resolve_tx_type(tx: dict) -> tuple[str, float]:
+    """
+    Determine (tx_type, amount) from a raw Teller transaction dict.
+
+    Teller uses two signals:
+      - tx["type"]: "debit" | "credit"  (direction of cash flow)
+      - tx["amount"]: positive for debits, NEGATIVE for credits on CC accounts
+
+    The sign of the amount is the ground truth.  Teller sometimes returns
+    type="debit" even for CC credits (payments / refunds), so we treat a
+    negative amount as authoritative and override the type field when they
+    contradict each other.
+    """
+    raw = float(tx.get("amount", 0))
+    teller_type = (tx.get("type", "") or "").lower()
+    if raw < 0 or teller_type == "credit":
+        return "credit", abs(raw)
+    return "debit", abs(raw)
 
 
 def _upsert_transaction(conn, tx: dict, institution: str, account_name: str = ""):
@@ -23,8 +37,7 @@ def _upsert_transaction(conn, tx: dict, institution: str, account_name: str = ""
     Skips if already stored by Teller ID (same-source dedup)
     OR if a cross-source duplicate exists (same date+amount+type+similar description).
     """
-    amount = abs(float(tx.get("amount", 0)))
-    tx_type = TELLER_TX_TYPE_MAP.get(tx.get("type", "debit"), "debit")
+    tx_type, amount = _resolve_tx_type(tx)
     description = tx.get("description", "") or tx.get("details", {}).get("counterparty", {}).get("name", "")
     teller_cat = (tx.get("details", {}).get("category", "") or "").strip()
     category = teller_cat if teller_cat in get_valid_categories() else categorize(description)

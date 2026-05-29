@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Building2, RefreshCw, Trash2, Plus, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Building2, RefreshCw, Trash2, Plus, CheckCircle, AlertCircle, Loader2, RotateCcw } from "lucide-react";
 import {
   getTellerEnrollments, tellerEnroll, tellerDisconnect, tellerSyncNow,
-  TellerEnrollment,
+  TellerEnrollment, apiFetch,
 } from "@/lib/api";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -157,9 +157,14 @@ export default function TellerConnect() {
   };
 
   const handleDisconnect = async (id: string) => {
-    await tellerDisconnect(id);
-    setEnrollments(prev => prev.filter(e => e.enrollment_id !== id));
-    setMsg({ text: "Institution disconnected.", ok: true });
+    if (!confirm("Disconnect this institution? Existing transactions stay but no new data will sync.")) return;
+    try {
+      await tellerDisconnect(id);
+      setEnrollments(prev => prev.filter(e => e.enrollment_id !== id));
+      setMsg({ text: "Institution disconnected.", ok: true });
+    } catch (e) {
+      setMsg({ text: "Disconnect failed — check backend logs.", ok: false });
+    }
   };
 
   const handleSyncNow = async () => {
@@ -170,6 +175,18 @@ export default function TellerConnect() {
       load();
     } catch {
       setMsg({ text: "Sync failed — check backend logs.", ok: false });
+    } finally { setSyncing(false); }
+  };
+
+  const handleResync = async () => {
+    if (!confirm("Re-sync from scratch? This deletes all Teller-sourced transactions and re-imports them fresh. Use this to fix sign/category issues.")) return;
+    setSyncing(true);
+    try {
+      const result = await apiFetch<{ deleted: number; new_transactions: number }>("/teller/resync", { method: "POST" });
+      setMsg({ text: `Re-sync complete — deleted ${result.deleted}, imported ${result.new_transactions} transactions.`, ok: true });
+      load();
+    } catch {
+      setMsg({ text: "Re-sync failed — check backend logs.", ok: false });
     } finally { setSyncing(false); }
   };
 
@@ -187,14 +204,25 @@ export default function TellerConnect() {
         </div>
         <div className="flex items-center gap-2">
           {enrollments.length > 0 && (
-            <button
-              onClick={handleSyncNow}
-              disabled={syncing}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs text-tx-2 hover:text-tx hover:bg-elevated border border-border transition-all disabled:opacity-50"
-            >
-              {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-              Sync all
-            </button>
+            <>
+              <button
+                onClick={handleSyncNow}
+                disabled={syncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs text-tx-2 hover:text-tx hover:bg-elevated border border-border transition-all disabled:opacity-50"
+              >
+                {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                Sync all
+              </button>
+              <button
+                onClick={handleResync}
+                disabled={syncing}
+                title="Delete all Teller transactions and re-import from scratch"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs text-tx-2 hover:text-tx hover:bg-elevated border border-border transition-all disabled:opacity-50"
+              >
+                <RotateCcw size={12} />
+                Re-sync
+              </button>
+            </>
           )}
           <button
             onClick={openTellerLink}

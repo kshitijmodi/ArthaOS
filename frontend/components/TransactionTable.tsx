@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, AlertCircle, Search, ArrowUpDown, Star, DollarSign } from "lucide-react";
-import { getTransactions, updateCategory, starTransaction, Transaction } from "@/lib/api";
+import { getTransactions, updateCategory, starTransaction, Transaction, apiFetch } from "@/lib/api";
 import { CATEGORIES, formatCurrency, formatDate, cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -20,6 +20,13 @@ export default function TransactionTable() {
   const [page, setPage] = useState(1);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [categoryList, setCategoryList] = useState<string[]>([...CATEGORIES].sort());
+
+  useEffect(() => {
+    apiFetch<{ categories: { name: string }[] }>("/categories")
+      .then(r => setCategoryList(r.categories.map(c => c.name).sort()))
+      .catch(() => {});
+  }, []);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -98,7 +105,7 @@ export default function TransactionTable() {
           className="bg-bg border border-border rounded-xl text-sm text-tx-2 px-3 py-2 focus:outline-none focus:border-accent/50 cursor-pointer"
         >
           <option value="">All categories</option>
-          {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          {categoryList.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         {filterBtn(starredOnly, "Starred", <Star size={12} />, () => { setStarredOnly(s => !s); setPage(1); })}
         {filterBtn(chargesOnly, "Fees & Interest", <DollarSign size={12} />, () => { setChargesOnly(s => !s); setPage(1); })}

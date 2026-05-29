@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { Target, Plus, Trash2, X, Check, TrendingUp, PiggyBank, CreditCard, Pencil } from "lucide-react";
-import { getGoals, createGoal, updateGoal, deleteGoal, Goal } from "@/lib/api";
+import { getGoals, createGoal, updateGoal, deleteGoal, Goal, apiFetch } from "@/lib/api";
 import { cn, CATEGORIES } from "@/lib/utils";
 
 const GOAL_TYPE_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
@@ -44,6 +44,13 @@ export default function GoalsPanel() {
   const [form, setForm] = useState(BLANK_FORM);
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
+  const [categoryList, setCategoryList] = useState<string[]>([...CATEGORIES].sort());
+
+  useEffect(() => {
+    apiFetch<{ categories: { name: string }[] }>("/categories")
+      .then(r => setCategoryList(r.categories.map(c => c.name).sort()))
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -180,7 +187,7 @@ export default function GoalsPanel() {
                 onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
               >
                 <option value="">All categories</option>
-                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                {categoryList.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             )}
             <input

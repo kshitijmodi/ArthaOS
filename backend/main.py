@@ -983,3 +983,43 @@ def teller_sync_now():
     from backend.teller.sync import sync_all
     result = sync_all()
     return result
+
+
+@app.post("/teller/resync")
+def teller_resync():
+    """
+    Delete all Teller-sourced transactions and re-import from scratch.
+    Use this to fix sign/type issues after a sync.py correction.
+    """
+    with db() as conn:
+        deleted = conn.execute(
+            "DELETE FROM transactions WHERE source_file LIKE 'teller:%'"
+        ).rowcount
+    from backend.teller.sync import sync_all
+    result = sync_all()
+    result["deleted"] = deleted
+    return result
+
+
+@app.post("/categorizer/fix-invalid")
+def fix_invalid_categories():
+    """
+    Find transactions whose category is not in the categories table and
+    re-run categorization on them using current keyword + learned rules.
+    """
+    from backend.processing.categorizer import categorize
+    with db() as conn:
+        valid = {r["name"] for r in conn.execute("SELECT name FROM categories").fetchall()}
+        rows = conn.execute(
+            "SELECT id, description, category FROM transactions WHERE category_source = 'auto'"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            if row["category"] not in valid:
+                new_cat = categorize(row["description"])
+                conn.execute(
+                    "UPDATE transactions SET category = ? WHERE id = ?",
+                    (new_cat, row["id"]),
+                )
+                updated += 1
+    return {"updated": updated}
