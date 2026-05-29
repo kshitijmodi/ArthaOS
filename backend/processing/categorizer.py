@@ -29,7 +29,7 @@ RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"amazon|flipkart|myntra|ajio|nykaa|meesho|snapdeal|shopify|tatacliq|croma|vijay\s*sales|reliance\s*digital", re.I), "Shopping"),
     (re.compile(r"apollo|fortis|medplus|1mg\b|pharmeasy|netmeds|hospital|clinic|pharmacy|diagnostic|lab\s*test|dr\.", re.I), "Healthcare"),
     (re.compile(r"udemy|coursera|byju|unacademy|vedantu|school\s*fee|college\s*fee|tuition|exam\s*fee", re.I), "Education"),
-    (re.compile(r"salary|neft\s*cr|rtgs\s*cr|credit\s*salary|payroll|stipend", re.I), "Income"),
+    (re.compile(r"direct\s*deposit|salary|neft\s*cr|rtgs\s*cr|credit\s*salary|payroll|paylocity|stipend", re.I), "Income"),
     (re.compile(r"payment\s*thank\s*you|autopay|bill\s*pay|balance\s*payment|thank\s*you\s*payment|online\s*payment|web\s*payment|mobile\s*payment|ach\s*payment|wire\s*transfer|\bzelle\b|\bvenmo\b|\bpaypal\b|cc\s*payment|card\s*payment|citi\s*payment|chase\s*payment|capital\s*one\s*payment|wells\s*fargo\s*payment|bank\s*of\s*america\s*payment|bofa\s*payment|amex\s*payment", re.I), "Transfer"),
 ]
 

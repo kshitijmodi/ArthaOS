@@ -95,11 +95,11 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
   }, [asOf]);
 
   const m = useMemo(() => {
-    const credits = transactions.filter(t => t.transaction_type === "credit");
+    const incomes = transactions.filter(t => t.category === "Income");
     const debits  = transactions.filter(t => t.transaction_type === "debit");
     return {
-      credits, debits,
-      income:   credits.reduce((s, t) => s + t.amount, 0),
+      incomes, debits,
+      income:   incomes.reduce((s, t) => s + t.amount, 0),
       expenses: debits.reduce((s, t)  => s + t.amount, 0),
     };
   }, [transactions]);
@@ -111,7 +111,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
       const start = new Date(end); start.setDate(end.getDate() - 7);
       const week = allTxns.filter(t => { const d = new Date(t.date); return d >= start && d < end; });
       return {
-        income:   week.filter(t => t.transaction_type === "credit").reduce((s, t) => s + t.amount, 0),
+        income:   week.filter(t => t.category === "Income").reduce((s, t) => s + t.amount, 0),
         expenses: week.filter(t => t.transaction_type === "debit").reduce((s, t) => s + t.amount, 0),
       };
     }).reverse();
@@ -129,11 +129,11 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card
           label="Income" value={formatCurrency(m.income)}
-          sub={`${m.credits.length} credit${m.credits.length !== 1 ? "s" : ""}`}
+          sub={`${m.incomes.length} direct deposit${m.incomes.length !== 1 ? "s" : ""}`}
           icon={<ArrowUpRight size={14} className="text-income" />}
           iconBg="bg-income/10" border="border-income/20 hover:border-income/40" accent="text-income"
           sparkData={weekly.map(w => w.income)} sparkColor="var(--color-income, #22c55e)"
-          onClick={() => onDrillDown("Income", m.credits)}
+          onClick={() => onDrillDown("Income", m.incomes)}
         />
         <Card
           label="Expenses" value={formatCurrency(m.expenses)}
