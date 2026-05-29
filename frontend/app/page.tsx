@@ -17,6 +17,7 @@ import InsightsPanel from "@/components/InsightsPanel";
 import IngestionStatus from "@/components/IngestionStatus";
 import CategoryManager from "@/components/CategoryManager";
 import TellerConnect from "@/components/TellerConnect";
+import PlaidConnect from "@/components/PlaidConnect";
 import { getTransactions, Transaction } from "@/lib/api";
 import { formatCurrency, cn } from "@/lib/utils";
 import FloatingChat from "@/components/FloatingChat";
@@ -195,6 +196,7 @@ export default function Page() {
               <p className="text-sm text-tx-2 mt-1">Email ingestion, categories and system configuration</p>
             </div>
             <TellerConnect />
+            <PlaidConnect />
             <IngestionStatus />
             <InsightsPanel />
             <CategoryManager />

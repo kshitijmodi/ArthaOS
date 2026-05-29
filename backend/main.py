@@ -343,23 +343,41 @@ def accounts_summary(as_of: Optional[str] = None):
             cc_balance   = round(period_balance("lower(a.type) IN ('credit','credit_card')"), 2)
             loan_balance = round(period_balance("lower(a.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"), 2)
         else:
-            bank_row = conn.execute(
+            # Teller depository
+            t_bank = conn.execute(
                 """SELECT COALESCE(SUM(COALESCE(balance_available, balance_ledger, 0)), 0) as total
                    FROM teller_accounts WHERE lower(type) IN ('depository','checking','savings')"""
             ).fetchone()
-            bank_balance = round(bank_row["total"], 2)
+            # Plaid depository
+            p_bank = conn.execute(
+                """SELECT COALESCE(SUM(COALESCE(balance_available, balance_current, 0)), 0) as total
+                   FROM plaid_accounts WHERE lower(type) = 'depository'"""
+            ).fetchone()
+            bank_balance = round((t_bank["total"] or 0) + (p_bank["total"] or 0), 2)
 
-            cc_row = conn.execute(
+            # Teller CC
+            t_cc = conn.execute(
                 """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
                    FROM teller_accounts WHERE lower(type) IN ('credit','credit_card')"""
             ).fetchone()
-            cc_balance = round(cc_row["total"], 2)
+            # Plaid CC
+            p_cc = conn.execute(
+                """SELECT COALESCE(SUM(ABS(COALESCE(balance_current, 0))), 0) as total
+                   FROM plaid_accounts WHERE lower(type) = 'credit'"""
+            ).fetchone()
+            cc_balance = round((t_cc["total"] or 0) + (p_cc["total"] or 0), 2)
 
-            loan_row = conn.execute(
+            # Teller loans
+            t_loan = conn.execute(
                 """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
                    FROM teller_accounts WHERE lower(type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"""
             ).fetchone()
-            loan_balance = round(loan_row["total"], 2)
+            # Plaid loans
+            p_loan = conn.execute(
+                """SELECT COALESCE(SUM(ABS(COALESCE(balance_current, 0))), 0) as total
+                   FROM plaid_accounts WHERE lower(type) = 'loan'"""
+            ).fetchone()
+            loan_balance = round((t_loan["total"] or 0) + (p_loan["total"] or 0), 2)
 
         # 401K = Fidelity holdings (always latest snapshot)
         fidelity_row = conn.execute(
@@ -996,6 +1014,123 @@ def teller_resync():
             "DELETE FROM transactions WHERE source_file LIKE 'teller:%'"
         ).rowcount
     from backend.teller.sync import sync_all
+    result = sync_all()
+    result["deleted"] = deleted
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Plaid
+# ---------------------------------------------------------------------------
+
+class PlaidExchangeRequest(BaseModel):
+    public_token:   str
+    institution_id: str
+    institution:    str
+
+
+@app.get("/plaid/link-token")
+def plaid_link_token():
+    """Create and return a Plaid Link token for the frontend."""
+    from backend.plaid.client import create_link_token
+    try:
+        token = create_link_token()
+        return {"link_token": token}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/plaid/exchange")
+def plaid_exchange(req: PlaidExchangeRequest):
+    """Exchange a Plaid public_token for an access_token, store the item, kick off sync."""
+    from backend.plaid.client import exchange_public_token
+    try:
+        result = exchange_public_token(req.public_token)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    item_id      = result["item_id"]
+    access_token = result["access_token"]
+    institution  = req.institution
+
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO plaid_items (item_id, access_token, institution_id, institution)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(item_id) DO UPDATE SET
+                 access_token = excluded.access_token,
+                 status = 'active'""",
+            (item_id, access_token, req.institution_id, institution),
+        )
+
+    # Kick off immediate sync in background thread
+    from backend.plaid.sync import sync_item
+    import threading
+    threading.Thread(
+        target=sync_item,
+        args=(item_id, access_token, institution),
+        daemon=True,
+    ).start()
+
+    return {"status": "connected", "item_id": item_id}
+
+
+@app.get("/plaid/items")
+def plaid_items():
+    """List all connected Plaid items with their accounts."""
+    with db() as conn:
+        items    = conn.execute("SELECT * FROM plaid_items ORDER BY created_at DESC").fetchall()
+        accounts = conn.execute("SELECT * FROM plaid_accounts ORDER BY institution, name").fetchall()
+
+    accts_by_item: dict = {}
+    for a in accounts:
+        accts_by_item.setdefault(a["item_id"], []).append(dict(a))
+
+    return {
+        "items": [
+            {**dict(i), "accounts": accts_by_item.get(i["item_id"], [])}
+            for i in items
+        ]
+    }
+
+
+@app.delete("/plaid/items/{item_id}")
+def plaid_disconnect(item_id: str):
+    """Disconnect a Plaid item (revoke access token + mark inactive)."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT access_token FROM plaid_items WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Item not found")
+        conn.execute(
+            "UPDATE plaid_items SET status = 'inactive' WHERE item_id = ?", (item_id,)
+        )
+    try:
+        from backend.plaid.client import remove_item
+        remove_item(row["access_token"])
+    except Exception as exc:
+        logger.warning("[Plaid] remove_item failed (non-fatal): %s", exc)
+    return {"status": "disconnected"}
+
+
+@app.post("/plaid/sync")
+def plaid_sync_now():
+    """Manually trigger a Plaid sync for all active items."""
+    from backend.plaid.sync import sync_all
+    return sync_all()
+
+
+@app.post("/plaid/resync")
+def plaid_resync():
+    """Delete all Plaid-sourced transactions and re-import from scratch."""
+    with db() as conn:
+        deleted = conn.execute(
+            "DELETE FROM transactions WHERE source_file LIKE 'plaid:%'"
+        ).rowcount
+        # Reset cursors so sync_all re-fetches everything
+        conn.execute("UPDATE plaid_items SET cursor = NULL WHERE status = 'active'")
+    from backend.plaid.sync import sync_all
     result = sync_all()
     result["deleted"] = deleted
     return result

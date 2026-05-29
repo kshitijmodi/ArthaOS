@@ -228,6 +228,36 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_bal_hist_account ON teller_balance_history(account_id);
         CREATE INDEX IF NOT EXISTS idx_bal_hist_date    ON teller_balance_history(recorded_at);
 
+        CREATE TABLE IF NOT EXISTS plaid_items (
+            item_id         TEXT PRIMARY KEY,
+            access_token    TEXT NOT NULL,
+            institution_id  TEXT,
+            institution     TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'active',
+            cursor          TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            last_synced_at  TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS plaid_accounts (
+            account_id        TEXT PRIMARY KEY,
+            item_id           TEXT NOT NULL,
+            institution       TEXT NOT NULL,
+            name              TEXT NOT NULL,
+            official_name     TEXT,
+            type              TEXT NOT NULL,
+            subtype           TEXT,
+            currency          TEXT NOT NULL DEFAULT 'USD',
+            balance_available REAL,
+            balance_current   REAL,
+            balance_limit     REAL,
+            last_synced_at    TEXT,
+            FOREIGN KEY (item_id) REFERENCES plaid_items(item_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_plaid_accounts_item ON plaid_accounts(item_id);
+        CREATE INDEX IF NOT EXISTS idx_plaid_accounts_type ON plaid_accounts(type);
+
         -- Seed system_state rows
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('gmail', NULL);
         INSERT OR IGNORE INTO system_state (mailbox, last_fetched_at) VALUES ('yahoo', NULL);
@@ -317,6 +347,7 @@ def _run_migrations():
                 conn.execute(sql)
             except Exception:
                 pass  # column already exists
+
         # Ensure Transfer category exists on databases seeded before it was added
         conn.execute(
             """INSERT OR IGNORE INTO categories (name, keywords, is_system)
@@ -324,6 +355,36 @@ def _run_migrations():
                        'payment thank you,autopay,bill pay,balance payment,transfer,zelle,venmo,paypal,ach payment,wire transfer,cc payment,card payment,citi payment,chase payment,amex payment,capital one payment,wells fargo payment,bank of america payment',
                        1)"""
         )
+
+        # Plaid tables — safe to run on existing DBs without plaid_items yet
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS plaid_items (
+                item_id         TEXT PRIMARY KEY,
+                access_token    TEXT NOT NULL,
+                institution_id  TEXT,
+                institution     TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'active',
+                cursor          TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                last_synced_at  TEXT
+            );
+            CREATE TABLE IF NOT EXISTS plaid_accounts (
+                account_id        TEXT PRIMARY KEY,
+                item_id           TEXT NOT NULL,
+                institution       TEXT NOT NULL,
+                name              TEXT NOT NULL,
+                official_name     TEXT,
+                type              TEXT NOT NULL,
+                subtype           TEXT,
+                currency          TEXT NOT NULL DEFAULT 'USD',
+                balance_available REAL,
+                balance_current   REAL,
+                balance_limit     REAL,
+                last_synced_at    TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_plaid_accounts_item ON plaid_accounts(item_id);
+            CREATE INDEX IF NOT EXISTS idx_plaid_accounts_type ON plaid_accounts(type);
+        """)
 
 
 def _seed_categories():

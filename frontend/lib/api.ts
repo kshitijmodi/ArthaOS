@@ -188,3 +188,47 @@ export interface AccountsSummary {
 
 export const getAccountsSummary = (as_of?: string) =>
   apiFetch<AccountsSummary>(`/dashboard/accounts-summary${as_of ? `?as_of=${as_of}` : ""}`);
+
+// Plaid
+export interface PlaidAccount {
+  account_id: string;
+  name: string;
+  official_name: string | null;
+  type: string;
+  subtype: string | null;
+  currency: string;
+  balance_available: number | null;
+  balance_current: number | null;
+  balance_limit: number | null;
+  last_synced_at: string | null;
+}
+
+export interface PlaidItem {
+  item_id: string;
+  institution: string;
+  status: string;
+  created_at: string;
+  last_synced_at: string | null;
+  accounts: PlaidAccount[];
+}
+
+export const getPlaidLinkToken = () =>
+  apiFetch<{ link_token: string }>("/plaid/link-token");
+
+export const plaidExchange = (public_token: string, institution_id: string, institution: string) =>
+  apiFetch("/plaid/exchange", {
+    method: "POST",
+    body: JSON.stringify({ public_token, institution_id, institution }),
+  });
+
+export const getPlaidItems = () =>
+  apiFetch<{ items: PlaidItem[] }>("/plaid/items");
+
+export const plaidDisconnect = (item_id: string) =>
+  apiFetch(`/plaid/items/${item_id}`, { method: "DELETE" });
+
+export const plaidSyncNow = () =>
+  apiFetch("/plaid/sync", { method: "POST" });
+
+export const plaidResync = () =>
+  apiFetch("/plaid/resync", { method: "POST" });

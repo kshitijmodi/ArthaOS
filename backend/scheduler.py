@@ -56,6 +56,16 @@ def _teller_poll():
         logger.error("[Scheduler] Teller poll failed: %s", exc)
 
 
+def _plaid_poll():
+    try:
+        from backend.plaid.sync import sync_all
+        result = sync_all()
+        if result.get("new_transactions", 0) > 0:
+            logger.info("[Scheduler] Plaid poll — %d new transaction(s)", result["new_transactions"])
+    except Exception as exc:
+        logger.error("[Scheduler] Plaid poll failed: %s", exc)
+
+
 def _run_due_tasks():
     try:
         from backend.agent.task_runner import run_due_tasks
@@ -74,11 +84,14 @@ def start_scheduler():
     _scheduler.add_job(_daily_agent_run, "cron", hour=13, minute=30, id="agent_scan", timezone="America/New_York")
     # Teller poll every 30 minutes
     _scheduler.add_job(_teller_poll, "interval", minutes=30, id="teller_poll")
+    # Plaid poll every 30 minutes (offset by 10m to avoid simultaneous DB writes)
+    _scheduler.add_job(_plaid_poll, "interval", minutes=30, id="plaid_poll",
+                       start_date="2020-01-01 00:10:00")
     # Scheduled task runner every 30 minutes
     _scheduler.add_job(_run_due_tasks, "interval", minutes=30, id="task_runner")
 
     _scheduler.start()
-    logger.info("[Scheduler] Started — daily fetch at 13:00 ET, agent scan at 13:30 ET, Teller poll + task runner every 30m")
+    logger.info("[Scheduler] Started — daily fetch at 13:00 ET, agent scan at 13:30 ET, Teller+Plaid poll every 30m")
     return _scheduler
 
 

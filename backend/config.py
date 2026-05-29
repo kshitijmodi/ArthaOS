@@ -71,6 +71,11 @@ LATE_FEE_CONFIDENCE = float(os.getenv("LATE_FEE_CONFIDENCE", "0.90"))
 # Default confidence score for keyword-matched suspicious charges
 SUSPICIOUS_KEYWORD_CONFIDENCE = float(os.getenv("SUSPICIOUS_KEYWORD_CONFIDENCE", "0.85"))
 
+# Plaid
+PLAID_CLIENT_ID = os.getenv("PLAID_CLIENT_ID", "")
+PLAID_SECRET    = os.getenv("PLAID_SECRET", "")
+PLAID_ENV       = os.getenv("PLAID_ENV", "sandbox")
+
 # FastAPI
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
