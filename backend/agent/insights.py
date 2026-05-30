@@ -148,17 +148,17 @@ def estimate_affordability(amount: float) -> AffordabilityResult:
 
     if affordable:
         explanation = (
-            f"Based on your average monthly income (₹{avg_income:,.0f}) and spending "
-            f"so far this month (₹{this_month:,.0f}), you have approximately "
-            f"₹{remaining:,.0f} available. ₹{amount:,.0f} appears affordable."
+            f"Based on your average monthly income (${avg_income:,.0f}) and spending "
+            f"so far this month (${this_month:,.0f}), you have approximately "
+            f"${remaining:,.0f} available. ${amount:,.0f} appears affordable."
         )
     else:
         shortfall = amount - remaining
         explanation = (
-            f"This may be a stretch. You've spent ₹{this_month:,.0f} this month "
-            f"against average income of ₹{avg_income:,.0f}. "
-            f"₹{amount:,.0f} exceeds estimated remaining budget by ₹{shortfall:,.0f}. "
-            f"Consider spreading across months or cutting ₹{shortfall/2:,.0f} from discretionary spend."
+            f"This may be a stretch. You've spent ${this_month:,.0f} this month "
+            f"against average income of ${avg_income:,.0f}. "
+            f"${amount:,.0f} exceeds estimated remaining budget by ${shortfall:,.0f}. "
+            f"Consider spreading across months or cutting ${shortfall/2:,.0f} from discretionary spend."
         )
 
     return AffordabilityResult(
@@ -365,14 +365,14 @@ def generate_trend_recommendations() -> list[TrendRecommendation]:
             recommendations.append(TrendRecommendation(
                 type="spend_trend",
                 title="Spending trending up",
-                body=f"Your monthly spend has grown from ₹{recent[0]:,.0f} to ₹{recent[-1]:,.0f} over the last 3 months. Review discretionary categories.",
+                body=f"Your monthly spend has grown from ${recent[0]:,.0f} to ${recent[-1]:,.0f} over the last 3 months. Review discretionary categories.",
                 severity="warning",
             ))
         elif recent[-1] < recent[0] * 0.90:
             recommendations.append(TrendRecommendation(
                 type="spend_trend",
                 title="Spending coming down",
-                body=f"Your spend dropped from ₹{recent[0]:,.0f} to ₹{recent[-1]:,.0f} — good discipline. Keep it up.",
+                body=f"Your spend dropped from ${recent[0]:,.0f} to ${recent[-1]:,.0f} — good discipline. Keep it up.",
                 severity="positive",
             ))
 
@@ -382,7 +382,7 @@ def generate_trend_recommendations() -> list[TrendRecommendation]:
         recommendations.append(TrendRecommendation(
             type="subscription_creep",
             title="Subscription spend above 5% of income",
-            body=f"Subscriptions average ₹{sub_avg:,.0f}/month (~{sub_avg/avg_income:.0%} of income). Audit and pause ones you use less than weekly.",
+            body=f"Subscriptions average ${sub_avg:,.0f}/month (~{sub_avg/avg_income:.0%} of income). Audit and pause ones you use less than weekly.",
             severity="warning",
         ))
 
@@ -392,7 +392,7 @@ def generate_trend_recommendations() -> list[TrendRecommendation]:
         recommendations.append(TrendRecommendation(
             type="emi_stress",
             title="High EMI-to-income ratio",
-            body=f"EMIs are consuming ~{emi_avg/avg_income:.0%} of income (₹{emi_avg:,.0f}/month). Financial guidelines suggest keeping this below 40%.",
+            body=f"EMIs are consuming ~{emi_avg/avg_income:.0%} of income (${emi_avg:,.0f}/month). Financial guidelines suggest keeping this below 40%.",
             severity="warning",
         ))
 

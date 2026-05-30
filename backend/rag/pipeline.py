@@ -47,7 +47,7 @@ def _sql_context(query: str) -> str:
             if rows:
                 lines.append("Spend by category (all time):")
                 for r in rows:
-                    lines.append(f"  {r['category']}: ₹{r['total']}")
+                    lines.append(f"  {r['category']}: ${r['total']}")
 
         # This month
         if any(w in q for w in ["this month", "current month", "month so far"]):
@@ -61,7 +61,7 @@ def _sql_context(query: str) -> str:
             if rows:
                 lines.append("This month's spend by category:")
                 for r in rows:
-                    lines.append(f"  {r['category']}: ₹{r['total']}")
+                    lines.append(f"  {r['category']}: ${r['total']}")
 
         # Last month
         if any(w in q for w in ["last month", "previous month"]):
@@ -75,7 +75,7 @@ def _sql_context(query: str) -> str:
             if rows:
                 lines.append("Last month's spend by category:")
                 for r in rows:
-                    lines.append(f"  {r['category']}: ₹{r['total']}")
+                    lines.append(f"  {r['category']}: ${r['total']}")
 
         # EMIs
         if any(w in q for w in ["emi", "loan", "repay"]):
@@ -87,7 +87,7 @@ def _sql_context(query: str) -> str:
             if rows:
                 lines.append("Recent EMI transactions:")
                 for r in rows:
-                    lines.append(f"  {r['date']} | {r['description']} | ₹{r['amount']}")
+                    lines.append(f"  {r['date']} | {r['description']} | ${r['amount']}")
 
         # Subscriptions
         if any(w in q for w in ["subscription", "recurring", "netflix", "jio", "airtel"]):
@@ -99,7 +99,7 @@ def _sql_context(query: str) -> str:
             if rows:
                 lines.append("Recent subscription charges:")
                 for r in rows:
-                    lines.append(f"  {r['date']} | {r['description']} | ₹{r['amount']}")
+                    lines.append(f"  {r['date']} | {r['description']} | ${r['amount']}")
 
         # Highest expenses
         if any(w in q for w in ["highest", "largest", "biggest", "top"]):
@@ -111,7 +111,7 @@ def _sql_context(query: str) -> str:
             if rows:
                 lines.append("Highest individual expenses:")
                 for r in rows:
-                    lines.append(f"  {r['date']} | {r['description']} | ₹{r['amount']} [{r['category']}]")
+                    lines.append(f"  {r['date']} | {r['description']} | ${r['amount']} [{r['category']}]")
 
         # Recent transactions for any follow-up or date-related questions
         if not lines or any(w in q for w in ["when", "last", "recent", "date", "charged", "time", "latest"]):
@@ -123,7 +123,7 @@ def _sql_context(query: str) -> str:
             if rows:
                 lines.append("Most recent transactions:")
                 for r in rows:
-                    lines.append(f"  {r['date']} | {r['description']} | ₹{r['amount']} [{r['category']}]")
+                    lines.append(f"  {r['date']} | {r['description']} | ${r['amount']} [{r['category']}]")
 
     return "\n".join(lines)
 
