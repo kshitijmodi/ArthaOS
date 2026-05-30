@@ -125,8 +125,8 @@ def detect_overspend() -> list[Alert]:
                 alert_type="overspend",
                 severity="medium",
                 description=(
-                    f"Your {cat} spend this month (₹{curr:,.0f}) is {pct}% above "
-                    f"your monthly average (₹{avg:,.0f})."
+                    f"Your {cat} spend this month (${curr:,.0f}) is {pct}% above "
+                    f"your monthly average (${avg:,.0f})."
                 ),
             ))
     return alerts
@@ -174,7 +174,7 @@ def detect_anomalies() -> list[Alert]:
                 alert_type="anomaly",
                 severity="high",
                 description=(
-                    f"Unusual transaction: ₹{amt:,.0f} at {row['description']} on {row['date']} "
+                    f"Unusual transaction: ${amt:,.0f} at {row['description']} on {row['date']} "
                     f"is {round(amt/avg, 1)}× your typical {cat} spend."
                 ),
                 related_transactions=[row["id"]],
@@ -185,7 +185,7 @@ def detect_anomalies() -> list[Alert]:
                 alert_type="anomaly",
                 severity="high",
                 description=(
-                    f"Unusual transaction detected — ₹{amt:,.0f} at unrecognised merchant "
+                    f"Unusual transaction detected — ${amt:,.0f} at unrecognised merchant "
                     f"'{row['description']}' on {row['date']}."
                 ),
                 related_transactions=[row["id"]],
@@ -241,7 +241,7 @@ def detect_recurring_issues() -> list[Alert]:
             alerts.append(Alert(
                 alert_type="missing_charge",
                 severity="medium",
-                description=f"Expected charge missing: '{desc}' (₹{last_amt:,.0f}) not seen this month.",
+                description=f"Expected charge missing: '{desc}' (${last_amt:,.0f}) not seen this month.",
             ))
         else:
             this_amt = this_month_map[desc]
@@ -253,7 +253,7 @@ def detect_recurring_issues() -> list[Alert]:
                     severity="medium",
                     description=(
                         f"Recurring charge changed: '{desc}' {direction} from "
-                        f"₹{last_amt:,.0f} to ₹{this_amt:,.0f} this month."
+                        f"${last_amt:,.0f} to ${this_amt:,.0f} this month."
                     ),
                 ))
 
@@ -296,7 +296,7 @@ def detect_duplicates() -> list[Alert]:
             alert_type="duplicate",
             severity="high",
             description=(
-                f"Possible duplicate charge — ₹{row['amount']:,.0f} at '{row['description']}' "
+                f"Possible duplicate charge — ${row['amount']:,.0f} at '{row['description']}' "
                 f"appears on {row['date1']} and {row['date2']} ({DUPLICATE_WINDOW_DAYS}-day window)."
             ),
             related_transactions=[row["id1"], row["id2"]],
@@ -347,8 +347,8 @@ def detect_budget_overrun() -> list[Alert]:
             alert_type="budget_overrun",
             severity="medium",
             description=(
-                f"On track to overspend this month — projected ₹{projected:,.0f} vs "
-                f"last month's ₹{last_month_total:,.0f} (+{overshoot_pct}%)."
+                f"On track to overspend this month — projected ${projected:,.0f} vs "
+                f"last month's ${last_month_total:,.0f} (+{overshoot_pct}%)."
             ),
         ))
 
@@ -838,7 +838,8 @@ _FINANCE_COMMANDS = {
 }
 
 _BALANCE_KEYWORDS = re.compile(
-    r"\b(balance|balances|account\s+balance|how\s+much.*(?:in|have)|what.*balance)\b",
+    r"\b(balance|balances|account\s+balance|how\s+much.*(?:in|have)|what.*balance"
+    r"|401k|401\(k\)|fidelity|robinhood|schwab|bilt|portfolio|investments?|net\s+worth)\b",
     re.IGNORECASE,
 )
 _INSTITUTION_KEYWORDS = {
@@ -855,8 +856,12 @@ _INSTITUTION_KEYWORDS = {
     "discover":    "discover",
     "capital one": "capital one",
     "schwab":      "schwab",
+    "charles schwab": "schwab",
     "fidelity":    "fidelity",
+    "401k":        "fidelity",
+    "401(k)":      "fidelity",
     "robinhood":   "robinhood",
+    "bilt":        "bilt rewards",
 }
 
 _HELP_TEXT = (
@@ -904,10 +909,9 @@ def handle_finance_command(query: str) -> dict:
 
 
 def _handle_balance_query(query: str) -> dict:
-    """Query teller_accounts for balances, optionally filtered by institution."""
+    """Query Teller + Plaid accounts for balances, optionally filtered by institution."""
     query_lower = query.lower()
 
-    # Detect institution filter
     institution_filter = None
     for keyword, canonical in _INSTITUTION_KEYWORDS.items():
         if keyword in query_lower:
@@ -916,57 +920,71 @@ def _handle_balance_query(query: str) -> dict:
 
     with db() as conn:
         if institution_filter:
-            rows = conn.execute(
+            teller_rows = conn.execute(
                 """SELECT ta.institution, ta.name, ta.type, ta.subtype,
-                          ta.balance_ledger, ta.balance_available, ta.last_synced_at,
-                          te.status
+                          ta.balance_ledger as balance, ta.last_synced_at
                    FROM teller_accounts ta
                    JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
-                   WHERE te.status = 'active'
-                     AND LOWER(ta.institution) LIKE ?
+                   WHERE te.status = 'active' AND LOWER(ta.institution) LIKE ?
                    ORDER BY ta.type, ta.name""",
                 (f"%{institution_filter}%",),
             ).fetchall()
+            plaid_rows = conn.execute(
+                """SELECT institution, name, type, subtype,
+                          balance_current as balance, last_synced_at
+                   FROM plaid_accounts WHERE LOWER(institution) LIKE ?
+                   ORDER BY type, name""",
+                (f"%{institution_filter}%",),
+            ).fetchall()
         else:
-            rows = conn.execute(
+            teller_rows = conn.execute(
                 """SELECT ta.institution, ta.name, ta.type, ta.subtype,
-                          ta.balance_ledger, ta.balance_available, ta.last_synced_at,
-                          te.status
+                          ta.balance_ledger as balance, ta.last_synced_at
                    FROM teller_accounts ta
                    JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
                    WHERE te.status = 'active'
                    ORDER BY ta.institution, ta.type, ta.name""",
             ).fetchall()
+            plaid_rows = conn.execute(
+                """SELECT institution, name, type, subtype,
+                          balance_current as balance, last_synced_at
+                   FROM plaid_accounts ORDER BY institution, type, name""",
+            ).fetchall()
 
-    if not rows:
+    all_rows = [dict(r) for r in teller_rows] + [dict(r) for r in plaid_rows]
+    all_rows.sort(key=lambda r: (r["institution"], r["type"], r["name"]))
+
+    if not all_rows:
         if institution_filter:
             return {
-                "answer": f"No connected accounts found for {institution_filter.title()}. Make sure it's linked in your dashboard.",
-                "low_confidence": False,
-                "sources": [],
+                "answer": f"No connected accounts found for {institution_filter.title()}. Link it in dashboard Settings.",
+                "low_confidence": False, "sources": [],
             }
         return {
-            "answer": "No connected bank accounts found. Link your accounts in the dashboard Settings → Connected Accounts.",
-            "low_confidence": False,
-            "sources": [],
+            "answer": "No connected accounts found. Link accounts in dashboard Settings → Connected Accounts.",
+            "low_confidence": False, "sources": [],
         }
 
     lines = []
     current_institution = None
-    total = 0.0
-    for row in rows:
+    assets, liabilities = 0.0, 0.0
+    for row in all_rows:
         if row["institution"] != current_institution:
             current_institution = row["institution"]
             lines.append(f"\n*{current_institution}*")
-        balance = row["balance_ledger"] if row["balance_ledger"] is not None else row["balance_available"]
-        account_type = f"{row['type']}" + (f" · {row['subtype']}" if row["subtype"] else "")
-        balance_str = f"${balance:,.2f}" if balance is not None else "N/A"
-        lines.append(f"  {row['name']} ({account_type}): {balance_str}")
-        if balance:
-            total += balance
+        bal = row["balance"]
+        acct_type = row["type"] + (f" · {row['subtype']}" if row.get("subtype") else "")
+        bal_str = f"${abs(bal):,.2f}" if bal is not None else "N/A"
+        lines.append(f"  {row['name']} ({acct_type}): {bal_str}")
+        if bal:
+            if row["type"] in ("credit", "loan"):
+                liabilities += abs(bal)
+            else:
+                assets += abs(bal)
 
-    suffix = f"\n\n*Total: ${total:,.2f}*" if not institution_filter and len(rows) > 1 else ""
-    synced = rows[0]["last_synced_at"] or "unknown"
+    net = assets - liabilities
+    suffix = f"\n\n*Assets: ${assets:,.2f} | Liabilities: ${liabilities:,.2f} | Net: ${net:,.2f}*" if not institution_filter else ""
+    synced = all_rows[0].get("last_synced_at") or "unknown"
     return {
         "answer": "Account Balances:" + "".join(lines) + suffix + f"\n\n_Last synced: {synced}_",
         "low_confidence": False,
@@ -1171,14 +1189,14 @@ def _dispatch_finance_command(query: str) -> dict:
         delta = this_month - last_month
         delta_sign = "+" if delta >= 0 else ""
         top_cat_str = (
-            f"\nTop category: {top_cat['category']} (₹{top_cat['total']:,.0f})"
+            f"\nTop category: {top_cat['category']} (${top_cat['total']:,.0f})"
             if top_cat else ""
         )
         return {
             "answer": (
-                f"This month's spend: ₹{this_month:,.0f}\n"
-                f"Last month's spend: ₹{last_month:,.0f}\n"
-                f"Change: {delta_sign}₹{delta:,.0f}"
+                f"This month's spend: ${this_month:,.0f}\n"
+                f"Last month's spend: ${last_month:,.0f}\n"
+                f"Change: {delta_sign}${abs(delta):,.0f}"
                 f"{top_cat_str}"
             ),
             "low_confidence": False,

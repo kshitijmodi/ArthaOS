@@ -51,9 +51,19 @@ def _categorize_tx(tx: dict) -> str:
     Determine category for a Plaid transaction.
     Priority: personal_finance_category map → static keyword rules.
     """
-    pfc = (tx.get("personal_finance_category") or {}).get("primary", "")
+    pfc_obj  = tx.get("personal_finance_category") or {}
+    pfc      = pfc_obj.get("primary", "")
+    detailed = pfc_obj.get("detailed", "").upper()
+
+    # TRANSFER_IN can mean ACH payroll — check detailed before mapping to Transfer
+    if pfc == "TRANSFER_IN":
+        if any(k in detailed for k in ("PAYROLL", "INCOME", "SALARY", "DIRECT_DEPOSIT")):
+            return "Income"
+        return "Transfer"
+
     if pfc and pfc in _PFC_MAP:
         return _PFC_MAP[pfc]
+
     description = tx.get("name", "") or tx.get("merchant_name", "")
     return categorize_static(description)
 
@@ -125,15 +135,22 @@ def sync_item(item_id: str, access_token: str, institution: str) -> dict:
         qty    = h.get("quantity")
         price  = h.get("institution_price") or sec.get("close_price")
         value  = h.get("institution_value") or ((qty or 0) * (price or 0))
+        cost_basis = h.get("cost_basis")  # total cost basis for this position
+        gain_loss = round(value - cost_basis, 2) if (cost_basis is not None and value) else None
+        gain_loss_pct = round((gain_loss / cost_basis) * 100, 2) if (cost_basis and gain_loss is not None) else None
         acct   = acct_map.get(h.get("account_id", ""), {})
         prepared_holdings.append({
-            "ticker":     ticker,
-            "name":       name,
-            "quantity":   qty,
-            "price":      price,
-            "total_value":value,
-            "acc_name":   acct.get("name", ""),
-            "source_file":f"plaid:{item_id}:{h.get('account_id','')}:{ticker}",
+            "ticker":       ticker,
+            "name":         name,
+            "quantity":     qty,
+            "price":        price,
+            "total_value":  value,
+            "cost_basis":   cost_basis,
+            "gain_loss":    gain_loss,
+            "gain_loss_pct":gain_loss_pct,
+            "gain_loss_day":None,  # not provided by Plaid — would need live market data
+            "acc_name":     acct.get("name", ""),
+            "source_file":  f"plaid:{item_id}:{h.get('account_id','')}:{ticker}",
         })
 
     # ── Phase 2: write to DB ─────────────────────────────────────────────── #
@@ -197,15 +214,20 @@ def sync_item(item_id: str, access_token: str, institution: str) -> dict:
             conn.execute(
                 """INSERT INTO investment_holdings
                    (as_of_date, ticker, name, quantity, price, total_value,
+                    cost_basis, gain_loss, gain_loss_pct, gain_loss_day,
                     account, broker, source_file)
-                   VALUES (?,?,?,?,?,?,?,?,?)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(as_of_date, ticker, account, source_file)
                    DO UPDATE SET
-                     quantity    = excluded.quantity,
-                     price       = excluded.price,
-                     total_value = excluded.total_value""",
+                     quantity      = excluded.quantity,
+                     price         = excluded.price,
+                     total_value   = excluded.total_value,
+                     cost_basis    = excluded.cost_basis,
+                     gain_loss     = excluded.gain_loss,
+                     gain_loss_pct = excluded.gain_loss_pct""",
                 (today, h["ticker"], h["name"], h["quantity"], h["price"],
-                 h["total_value"], h["acc_name"], institution, h["source_file"]),
+                 h["total_value"], h["cost_basis"], h["gain_loss"], h["gain_loss_pct"],
+                 h["gain_loss_day"], h["acc_name"], institution, h["source_file"]),
             )
 
         # Persist cursor and last_synced_at

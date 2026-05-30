@@ -1,12 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
-import { CheckCircle, XCircle, RefreshCw } from "lucide-react";
-import { getIngestionStatus, apiFetch } from "@/lib/api";
+import { CheckCircle, XCircle, RefreshCw, Tags, RotateCcw } from "lucide-react";
+import { getIngestionStatus, recategorizeAll, plaidResync, apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export default function IngestionStatus() {
   const [data, setData] = useState<any>(null);
   const [fetching, setFetching] = useState(false);
+  const [recatMsg, setRecatMsg] = useState<string | null>(null);
+  const [recatting, setRecatting] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
 
   const load = async () => {
     try { setData(await getIngestionStatus()); } catch {}
@@ -20,19 +23,64 @@ export default function IngestionStatus() {
     finally { setFetching(false); }
   };
 
+  const triggerRecategorize = async () => {
+    setRecatting(true);
+    setRecatMsg(null);
+    try {
+      const res = await recategorizeAll();
+      setRecatMsg(`Re-categorized ${res.updated} transaction${res.updated !== 1 ? "s" : ""}`);
+    } catch {
+      setRecatMsg("Re-categorize failed");
+    } finally { setRecatting(false); }
+  };
+
+  const triggerPlaidResync = async () => {
+    setResyncing(true);
+    setRecatMsg(null);
+    try {
+      const res = await plaidResync();
+      setRecatMsg(`Plaid reset: deleted ${(res as any).deleted ?? 0} old transactions, imported ${(res as any).new_transactions ?? 0} fresh`);
+    } catch {
+      setRecatMsg("Plaid reset failed — check backend connection");
+    } finally { setResyncing(false); }
+  };
+
   return (
     <section className="rounded-2xl border border-border bg-surface p-5">
       <div className="flex items-center gap-2 mb-4">
         <h2 className="font-semibold text-tx">Email Ingestion</h2>
-        <button
-          onClick={triggerFetch}
-          disabled={fetching}
-          className="ml-auto flex items-center gap-1.5 text-xs text-tx-2 hover:text-tx border border-border hover:border-accent/40 rounded-xl px-3 py-1.5 transition-all"
-        >
-          <RefreshCw size={12} className={cn(fetching && "animate-spin")} />
-          Fetch now
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={triggerRecategorize}
+            disabled={recatting}
+            title="Re-run keyword rules on all auto-categorized transactions (fixes Income=0 and other mis-categorizations)"
+            className="flex items-center gap-1.5 text-xs text-tx-2 hover:text-tx border border-border hover:border-accent/40 rounded-xl px-3 py-1.5 transition-all disabled:opacity-50"
+          >
+            <Tags size={12} className={cn(recatting && "animate-pulse")} />
+            {recatting ? "Re-categorizing…" : "Re-categorize"}
+          </button>
+          <button
+            onClick={triggerPlaidResync}
+            disabled={resyncing}
+            title="Delete all Plaid transactions and re-fetch from scratch with corrected Income categorization"
+            className="flex items-center gap-1.5 text-xs text-tx-2 hover:text-income border border-border hover:border-income/40 rounded-xl px-3 py-1.5 transition-all disabled:opacity-50"
+          >
+            <RotateCcw size={12} className={cn(resyncing && "animate-spin")} />
+            {resyncing ? "Resyncing Plaid…" : "Plaid Reset"}
+          </button>
+          <button
+            onClick={triggerFetch}
+            disabled={fetching}
+            className="flex items-center gap-1.5 text-xs text-tx-2 hover:text-tx border border-border hover:border-accent/40 rounded-xl px-3 py-1.5 transition-all"
+          >
+            <RefreshCw size={12} className={cn(fetching && "animate-spin")} />
+            Fetch now
+          </button>
+        </div>
       </div>
+      {recatMsg && (
+        <p className={cn("text-xs mb-3", recatMsg.includes("failed") ? "text-expense" : "text-income")}>{recatMsg}</p>
+      )}
 
       {data ? (
         <div className="space-y-3">

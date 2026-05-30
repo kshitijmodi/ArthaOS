@@ -106,6 +106,9 @@ export async function sendFinanceCommand(args: string): Promise<QueryResponse> {
 
 export const getIngestionStatus = () => apiFetch("/ingestion/status");
 
+export const recategorizeAll = () =>
+  apiFetch<{ updated: number }>("/categorizer/recategorize-all", { method: "POST" });
+
 // Teller
 export interface TellerAccount {
   account_id: string;

@@ -81,7 +81,12 @@ app = FastAPI(title="ArthaOS", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
+    allow_origins=[
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:3001", "http://127.0.0.1:3001",
+        # Tailscale access
+        "http://100.102.103.53:3000", "http://100.102.103.53:3001",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -322,16 +327,23 @@ def accounts_summary(as_of: Optional[str] = None):
     with db() as conn:
         if as_of:
             # For each account, find the most recent history row on or before as_of
-            def period_balance(account_type_filter: str) -> float:
+            # prefer_ledger=True for CC/loans where balance_available is the credit line, not what's owed
+            def period_balance(account_type_filter: str, prefer_ledger: bool = False) -> float:
+                if prefer_ledger:
+                    hist_col = "COALESCE(h.balance_ledger, h.balance_available)"
+                    curr_col = "COALESCE(a.balance_ledger, 0)"
+                else:
+                    hist_col = "COALESCE(h.balance_available, h.balance_ledger)"
+                    curr_col = "COALESCE(a.balance_available, a.balance_ledger, 0)"
                 rows = conn.execute(
                     f"""SELECT a.account_id, a.type,
                                COALESCE(
-                                 (SELECT COALESCE(h.balance_available, h.balance_ledger)
+                                 (SELECT {hist_col}
                                   FROM teller_balance_history h
                                   WHERE h.account_id = a.account_id
                                     AND date(h.recorded_at) <= date(?)
                                   ORDER BY h.recorded_at DESC LIMIT 1),
-                                 COALESCE(a.balance_available, a.balance_ledger, 0)
+                                 {curr_col}
                                ) as bal
                         FROM teller_accounts a
                         WHERE {account_type_filter}""",
@@ -340,8 +352,8 @@ def accounts_summary(as_of: Optional[str] = None):
                 return sum(abs(r["bal"] or 0) for r in rows)
 
             bank_balance = round(period_balance("lower(a.type) IN ('depository','checking','savings')"), 2)
-            cc_balance   = round(period_balance("lower(a.type) IN ('credit','credit_card')"), 2)
-            loan_balance = round(period_balance("lower(a.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"), 2)
+            cc_balance   = round(period_balance("lower(a.type) IN ('credit','credit_card')", prefer_ledger=True), 2)
+            loan_balance = round(period_balance("lower(a.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')", prefer_ledger=True), 2)
         else:
             # Teller depository
             t_bank = conn.execute(
@@ -355,14 +367,14 @@ def accounts_summary(as_of: Optional[str] = None):
             ).fetchone()
             bank_balance = round((t_bank["total"] or 0) + (p_bank["total"] or 0), 2)
 
-            # Teller CC
+            # Teller CC — balance_ledger is amount owed; balance_available is remaining credit (wrong for this)
             t_cc = conn.execute(
-                """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
+                """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, 0))), 0) as total
                    FROM teller_accounts WHERE lower(type) IN ('credit','credit_card')"""
             ).fetchone()
-            # Plaid CC
+            # Plaid CC — balance_current is amount owed (positive); cap at 0 to ignore credit balances
             p_cc = conn.execute(
-                """SELECT COALESCE(SUM(ABS(COALESCE(balance_current, 0))), 0) as total
+                """SELECT COALESCE(SUM(MAX(0, COALESCE(balance_current, 0))), 0) as total
                    FROM plaid_accounts WHERE lower(type) = 'credit'"""
             ).fetchone()
             cc_balance = round((t_cc["total"] or 0) + (p_cc["total"] or 0), 2)
@@ -784,8 +796,9 @@ def investments_summary():
     """Portfolio summary: total value by broker + overall."""
     with db() as conn:
         # Latest holdings snapshot per broker (most recent as_of_date per account)
+        # Broker names are normalised to lowercase for consistent front-end matching
         portfolio = conn.execute(
-            """SELECT broker, account,
+            """SELECT lower(broker) as broker, account,
                       SUM(total_value) as total_value,
                       MAX(as_of_date) as as_of_date,
                       COUNT(*) as positions
@@ -794,7 +807,7 @@ def investments_summary():
                    SELECT MAX(as_of_date) FROM investment_holdings h2
                    WHERE h2.broker = h.broker AND h2.account = h.account
                )
-               GROUP BY broker, account"""
+               GROUP BY lower(broker), account"""
         ).fetchall()
 
         total_invested = conn.execute(
@@ -816,11 +829,38 @@ def investments_summary():
 
     portfolio_value = sum(r["total_value"] for r in portfolio)
 
+    with db() as conn:
+        # Per-broker unrealized P/L (open) — SUM without COALESCE so null stays null
+        # (null means no cost-basis data; 0 means data exists but no gain/loss yet)
+        pl_rows = conn.execute(
+            """SELECT lower(broker) as broker,
+                      SUM(gain_loss)     as gain_loss,
+                      SUM(gain_loss_day) as gain_loss_day
+               FROM investment_holdings h
+               WHERE h.as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               GROUP BY lower(broker)"""
+        ).fetchall()
+    pl_map = {r["broker"]: {"gain_loss": r["gain_loss"], "gain_loss_day": r["gain_loss_day"]} for r in pl_rows}
+
+    # Enrich accounts with per-broker P/L — preserve None so frontend can show "—"
+    accounts_out = []
+    for r in portfolio:
+        d = dict(r)
+        broker_pl = pl_map.get(r["broker"], {})
+        gl  = broker_pl.get("gain_loss")
+        gld = broker_pl.get("gain_loss_day")
+        d["gain_loss"]     = round(gl, 2)  if gl  is not None else None
+        d["gain_loss_day"] = round(gld, 2) if gld is not None else None
+        accounts_out.append(d)
+
     return {
         "portfolio_value": round(portfolio_value, 2),
         "total_invested": round(total_invested, 2),
         "total_dividends": round(total_dividends, 2),
-        "accounts": [dict(r) for r in portfolio],
+        "accounts": accounts_out,
         "recent_transactions": [dict(r) for r in recent_txs],
     }
 
@@ -894,14 +934,30 @@ def investments_transactions(
 
 @app.post("/investments/upload")
 async def upload_investment_file(file: UploadFile = File(...)):
-    """Manual upload for investment statement PDFs."""
+    """Manual upload for investment statement PDFs. Always force-updates holdings."""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
     dest = STATEMENTS_DIR / file.filename
     dest.write_bytes(await file.read())
     from backend.investments.pipeline import ingest_investment_file
-    result = ingest_investment_file(dest)
+    result = ingest_investment_file(dest, force=True)
     return result
+
+
+@app.post("/investments/reingest")
+def reingest_investment_files():
+    """Re-parse all investment PDFs in the statements dir and upsert holdings/transactions."""
+    from backend.investments.pipeline import ingest_investment_file
+    from backend.investments.parser import is_investment_pdf
+    results = []
+    for pdf in sorted(STATEMENTS_DIR.glob("*.pdf")):
+        try:
+            if is_investment_pdf(pdf):
+                r = ingest_investment_file(pdf, force=True)
+                results.append(r)
+        except Exception as exc:
+            results.append({"file": pdf.name, "status": "error", "reason": str(exc)})
+    return {"reingested": len(results), "results": results}
 
 
 @app.websocket("/ws/alerts")

@@ -50,6 +50,11 @@ module.exports = {
         PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium-browser",
         // Disable sandbox in headless server environment
         CHROMIUM_FLAGS: "--no-sandbox --disable-setuid-sandbox",
+        // Use localhost — REA and ArthaOS run on the same server.
+        // Using the external GCP IP for same-machine calls causes hairpin routing
+        // failures on GCP (port 8000 is not exposed externally through nginx).
+        ARTHAOS_API_URL: "http://localhost:8000",
+        ARTHAOS_ALERT_PORT: "8001",
       },
     },
   ],

@@ -56,10 +56,18 @@ def _store_holdings(holdings: list[InvestmentHolding], source_file: str) -> int:
         for h in holdings:
             try:
                 conn.execute(
-                    """INSERT OR IGNORE INTO investment_holdings
+                    """INSERT INTO investment_holdings
                        (as_of_date, ticker, name, quantity, price, total_value,
                         gain_loss, gain_loss_pct, account, broker, source_file)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(as_of_date, ticker, account, source_file)
+                       DO UPDATE SET
+                         name          = excluded.name,
+                         quantity      = excluded.quantity,
+                         price         = excluded.price,
+                         total_value   = excluded.total_value,
+                         gain_loss     = excluded.gain_loss,
+                         gain_loss_pct = excluded.gain_loss_pct""",
                     (h.as_of_date, h.ticker, h.name, h.quantity, h.price,
                      h.total_value, h.gain_loss, h.gain_loss_pct,
                      h.account, h.broker, source_file),
@@ -70,13 +78,15 @@ def _store_holdings(holdings: list[InvestmentHolding], source_file: str) -> int:
     return stored
 
 
-def ingest_investment_file(path: Path) -> dict:
-    """Parse and persist an investment statement PDF."""
-    logger.info("[InvPipeline] Ingesting: %s", path.name)
+def ingest_investment_file(path: Path, force: bool = False) -> dict:
+    """Parse and persist an investment statement PDF.
+    force=True skips the duplicate check and re-upserts all holdings/transactions.
+    """
+    logger.info("[InvPipeline] Ingesting: %s (force=%s)", path.name, force)
     file_size = path.stat().st_size
     result = parse_investment_pdf(path)
 
-    if _already_ingested(result.file_hash):
+    if not force and _already_ingested(result.file_hash):
         logger.info("[InvPipeline] Duplicate — skipping %s", path.name)
         return {"status": "skipped", "reason": "duplicate", "file": path.name}
 

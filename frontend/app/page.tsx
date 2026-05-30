@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo, useCallback } from "react";
+import dynamic from "next/dynamic";
 import Sidebar, { View } from "@/components/Sidebar";
 import FilterBar, { FilterState, defaultFilters } from "@/components/FilterBar";
 import { Menu, Zap } from "lucide-react";
@@ -17,10 +18,11 @@ import InsightsPanel from "@/components/InsightsPanel";
 import IngestionStatus from "@/components/IngestionStatus";
 import CategoryManager from "@/components/CategoryManager";
 import TellerConnect from "@/components/TellerConnect";
-import PlaidConnect from "@/components/PlaidConnect";
 import { getTransactions, Transaction } from "@/lib/api";
 import { formatCurrency, cn } from "@/lib/utils";
 import FloatingChat from "@/components/FloatingChat";
+
+const PlaidConnect = dynamic(() => import("@/components/PlaidConnect"), { ssr: false });
 
 /** End-of-period ISO date for /dashboard/accounts-summary ?as_of= */
 function periodEndDate(f: FilterState): string | undefined {

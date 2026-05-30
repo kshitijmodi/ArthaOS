@@ -143,8 +143,10 @@ def init_db():
             quantity        REAL,
             price           REAL,
             total_value     REAL NOT NULL,
+            cost_basis      REAL,
             gain_loss       REAL,
             gain_loss_pct   REAL,
+            gain_loss_day   REAL,
             account         TEXT NOT NULL,
             broker          TEXT NOT NULL,
             source_file     TEXT NOT NULL,
@@ -355,6 +357,16 @@ def _run_migrations():
                        'payment thank you,autopay,bill pay,balance payment,transfer,zelle,venmo,paypal,ach payment,wire transfer,cc payment,card payment,citi payment,chase payment,amex payment,capital one payment,wells fargo payment,bank of america payment',
                        1)"""
         )
+
+        # investment_holdings — add cost_basis and gain_loss_day columns
+        for col_sql in [
+            "ALTER TABLE investment_holdings ADD COLUMN cost_basis REAL",
+            "ALTER TABLE investment_holdings ADD COLUMN gain_loss_day REAL",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception:
+                pass  # column already exists
 
         # Plaid tables — safe to run on existing DBs without plaid_items yet
         conn.executescript("""
