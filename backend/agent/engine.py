@@ -888,9 +888,9 @@ _HELP_TEXT = (
 )
 
 
-def handle_finance_command(query: str) -> dict:
+def handle_finance_command(query: str, history: list[dict] | None = None) -> dict:
     """
-    Dispatch a /finance slash command.
+    Dispatch a /finance slash command or free-form finance question.
 
     Parses the first token of *query* as the sub-command and runs the
     corresponding detection module(s).  Returns a dict with keys
@@ -898,7 +898,7 @@ def handle_finance_command(query: str) -> dict:
     (``/finance`` endpoint in main.py) can return a uniform response.
     """
     try:
-        return _dispatch_finance_command(query)
+        return _dispatch_finance_command(query, history=history)
     except Exception as exc:
         logger.exception("[Finance] Error handling command %r", query)
         return {
@@ -1078,7 +1078,7 @@ def _handle_list_tasks() -> dict:
     }
 
 
-def _dispatch_finance_command(query: str) -> dict:
+def _dispatch_finance_command(query: str, history: list[dict] | None = None) -> dict:
     tokens = query.strip().lower().split()
     sub = tokens[0] if tokens else "help"
     action = _FINANCE_COMMANDS.get(sub, None)
@@ -1090,10 +1090,10 @@ def _dispatch_finance_command(query: str) -> dict:
             logger.debug("[Finance] Detected balance query — routing to balance handler")
             return _handle_balance_query(query)
 
-        # Not a sub-command — treat the whole query as a free-form question via RAG
+        # Not a sub-command — treat as free-form question via RAG (with history for context)
         logger.debug("[Finance] No sub-command match for %r — routing to RAG", query)
         from backend.rag.pipeline import query as rag_query
-        result = rag_query(query)
+        result = rag_query(query, history=history or [])
         return {
             "answer": result.answer,
             "low_confidence": result.low_confidence,

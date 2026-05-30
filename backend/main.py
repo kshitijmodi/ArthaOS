@@ -134,7 +134,7 @@ def finance_command_endpoint(req: QueryRequest):
 
     try:
         from backend.agent.engine import handle_finance_command
-        result = handle_finance_command(query)
+        result = handle_finance_command(query, history=req.history or [])
     except ImportError as exc:
         logger.error("[Finance] Failed to import engine: %s", exc)
         raise HTTPException(status_code=500, detail="Finance command handler unavailable")
@@ -977,12 +977,13 @@ async def ws_alerts(websocket: WebSocket):
 class WhatsAppQuery(BaseModel):
     query: str
     sender: Optional[str] = None
+    history: Optional[list] = None
 
 @app.post("/whatsapp/query")
 def whatsapp_query(req: WhatsAppQuery):
-    from backend.rag.pipeline import query
-    result = query(req.query)
-    return {"answer": result.answer, "low_confidence": result.low_confidence}
+    from backend.agent.engine import handle_finance_command
+    result = handle_finance_command(req.query, history=req.history or [])
+    return {"answer": result.get("answer", ""), "low_confidence": result.get("low_confidence", False)}
 
 
 # ---------------------------------------------------------------------------
