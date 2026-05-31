@@ -1,15 +1,29 @@
 """
-RAG query pipeline.
-Flow: query → FAISS retrieval → structured DB lookup → LLM reasoning → answer.
-Structured DB is always checked first; RAG chunks are supplementary context.
+RAG query pipeline — financially-intelligent context engine.
+
+Architecture:
+  1. Intent extraction — understand what the user is asking (query + conversation history)
+  2. Precision DB fetch — pull exactly the right data for the detected intent
+  3. LLM reasoning — answer with full, grounded context
 
 Context strategy:
-  - Base context (always included): account balances, this month spend summary,
-    recent transactions, unread alerts. Ensures follow-up questions always have
-    grounding data regardless of how they're phrased.
-  - Extended context (keyword-triggered): income history, full category breakdown,
-    specific transaction types, etc.
+  Always injected:
+    - Account balances + net worth
+    - This month + last month spend summary (ALL categories with counts)
+    - Recent 30 transactions
+
+  Intent-driven additions:
+    - Category drill-down: ALL transactions for the detected category + time period
+      (no row limit — user gets the complete list with a verified total)
+    - Month comparison: side-by-side this-vs-last for every category
+    - Income: monthly income totals for last 6 months
+    - Investment holdings: full portfolio from Plaid
+
+  History inheritance:
+    - If the current query is a follow-up ("those transactions", "break it down")
+      without an explicit category/period, we inherit both from recent history turns.
 """
+import re
 import logging
 from dataclasses import dataclass, field
 
@@ -20,11 +34,15 @@ from backend.storage.database import db
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are ArthaOS, a personal financial intelligence assistant for a US-based user.
-You answer questions about the user's finances using ONLY the context provided.
-All amounts are in US dollars ($). Be concise, precise, and always cite specific amounts and dates.
-When answering follow-up questions, use both the context provided AND the conversation history.
-If the context does not contain enough information to answer, say so clearly.
-Never make up numbers. Never access information outside the provided context."""
+
+Rules:
+- Answer using ONLY the context provided — never invent numbers or transactions.
+- All amounts are US dollars ($).
+- When you have a full transaction list for a category, present every item — do not truncate.
+- When a verified total is provided in the context, use it exactly.
+- For follow-up questions, combine the current context with the conversation history.
+- If data is insufficient, say so explicitly and suggest the user reconnect an account or run a sync.
+- Be concise and financially precise. Cite specific amounts, dates, and merchant names."""
 
 
 @dataclass
@@ -36,284 +54,527 @@ class QueryResult:
 
 
 # ---------------------------------------------------------------------------
-# Structured DB queries
+# Category mapping
 # ---------------------------------------------------------------------------
 
-def _base_context(conn) -> list[str]:
-    """Always-included context: balances, this month spend, recent txns, alerts."""
-    lines = []
+_CAT_KEYWORDS: dict[str, str] = {
+    "rent": "Rent", "lease": "Rent",
+    "groceries": "Groceries", "grocery": "Groceries",
+    "supermarket": "Groceries", "shoprite": "Groceries",
+    "dining": "Dining", "restaurant": "Dining", "restaurants": "Dining",
+    "eating out": "Dining", "eating": "Dining",
+    "travel": "Travel", "hotel": "Travel", "hotels": "Travel",
+    "flight": "Travel", "flights": "Travel",
+    "airline": "Travel", "airlines": "Travel", "airfare": "Travel",
+    "utilities": "Utilities", "utility": "Utilities", "electric": "Utilities",
+    "internet": "Utilities", "phone bill": "Utilities",
+    "subscriptions": "Subscriptions", "subscription": "Subscriptions",
+    "streaming": "Subscriptions",
+    "shopping": "Shopping",
+    "healthcare": "Healthcare", "medical": "Healthcare",
+    "pharmacy": "Healthcare", "doctor": "Healthcare",
+    "insurance": "Insurance",
+    "education": "Education",
+    "transfer": "Transfer", "transfers": "Transfer",
+    "emi": "EMIs", "emis": "EMIs",
+    "loan payment": "EMIs", "loan": "EMIs",
+    "miscellaneous": "Miscellaneous", "misc": "Miscellaneous",
+    "fees": "Fees & Interest", "interest": "Fees & Interest",
+    "income": "Income", "salary": "Income", "paycheck": "Income",
+    "payroll": "Income",
+}
 
-    # Account balances — always include so follow-ups like "what about my Bilt?" work
-    teller_rows = conn.execute(
-        """SELECT ta.institution, ta.name, ta.type, ta.subtype,
-                  ta.balance_ledger as balance
+# All valid DB category names (for direct-name matching in history/responses)
+_ALL_CAT_NAMES = {
+    "Rent", "Groceries", "Dining", "Travel", "Utilities", "Subscriptions",
+    "Insurance", "EMIs", "Shopping", "Healthcare", "Education", "Income",
+    "Transfer", "Fees & Interest", "Miscellaneous", "Investments",
+}
+
+# Strong signals that user wants a transaction list, not just a total
+_DRILL_STRONG = frozenset([
+    "transaction", "transactions", "txn", "txns",
+    "those", "them", "these", "it",
+    "list", "breakdown", "break down", "break it down",
+    "itemize", "itemized", "individual",
+    "amounting", "making up", "adding up",
+    "details", "detail", "charges",
+])
+
+# Weaker signals — only trigger drill if a category is also present
+_DRILL_WEAK = frozenset(["show", "give", "all", "what are"])
+
+_MONTH_NAMES: dict[str, str] = {
+    "january": "01", "jan": "01", "february": "02", "feb": "02",
+    "march": "03", "mar": "03", "april": "04", "apr": "04",
+    "may": "05", "june": "06", "jun": "06", "july": "07", "jul": "07",
+    "august": "08", "aug": "08", "september": "09", "sep": "09", "sept": "09",
+    "october": "10", "oct": "10", "november": "11", "nov": "11",
+    "december": "12", "dec": "12",
+}
+
+
+# ---------------------------------------------------------------------------
+# Intent extraction helpers
+# ---------------------------------------------------------------------------
+
+def _categories_in_text(text: str) -> list[str]:
+    """Extract DB category names from arbitrary text. Returns unique, ordered list."""
+    t = text.lower()
+    found: list[str] = []
+    seen: set[str] = set()
+
+    # Direct DB category name matches first (most reliable)
+    for cat in _ALL_CAT_NAMES:
+        if cat.lower() in t and cat not in seen:
+            found.append(cat)
+            seen.add(cat)
+
+    # Keyword mappings
+    for kw, cat in _CAT_KEYWORDS.items():
+        if kw in t and cat not in seen:
+            found.append(cat)
+            seen.add(cat)
+
+    return found
+
+
+def _detect_period(text: str) -> tuple[str, str] | None:
+    """
+    Returns (human_label, SQL WHERE fragment on `date`) or None.
+    """
+    t = text.lower()
+
+    if "last month" in t or "previous month" in t:
+        return ("last month",
+                "strftime('%Y-%m', date) = strftime('%Y-%m', date('now', '-1 month'))")
+    if "this month" in t or "current month" in t:
+        return ("this month",
+                "strftime('%Y-%m', date) = strftime('%Y-%m', 'now')")
+    if "last week" in t or "past week" in t or "this week" in t:
+        return ("last 7 days", "date >= date('now', '-7 days')")
+    if "last 30 days" in t or "past 30 days" in t:
+        return ("last 30 days", "date >= date('now', '-30 days')")
+    if "last 60 days" in t or "past 60 days" in t or "last 2 months" in t:
+        return ("last 60 days", "date >= date('now', '-60 days')")
+    if "last 90 days" in t or "past 90 days" in t or "last 3 months" in t:
+        return ("last 90 days", "date >= date('now', '-90 days')")
+    if "last 6 months" in t or "past 6 months" in t:
+        return ("last 6 months", "date >= date('now', '-180 days')")
+    if "last year" in t or "past year" in t:
+        return ("last 12 months", "date >= date('now', '-365 days')")
+    if any(w in t for w in ("all time", "all-time", "overall", "total ever",
+                             "historically", "ever spent", "lifetime")):
+        return ("all time", "1=1")
+
+    # Named month: "in april", "last april", "in may 2026", etc.
+    for month_name, month_num in _MONTH_NAMES.items():
+        if month_name in t:
+            year_m = re.search(r'\b(202[0-9])\b', t)
+            if year_m:
+                ym = f"{year_m.group(1)}-{month_num}"
+                return (f"{month_name.title()} {year_m.group(1)}",
+                        f"strftime('%Y-%m', date) = '{ym}'")
+            return (month_name.title(),
+                    f"strftime('%m', date) = '{month_num}' AND date >= date('now', '-400 days')")
+
+    return None
+
+
+def _inherit_period_from_history(history: list[dict]) -> tuple[str, str] | None:
+    """Scan recent history (newest first) for a time period mention."""
+    for msg in reversed(history[-6:]):
+        p = _detect_period(msg.get("content", ""))
+        if p:
+            return p
+    return None
+
+
+def _inherit_categories_from_history(history: list[dict], n_turns: int = 2) -> list[str]:
+    """Extract categories mentioned in the last n_turns of conversation."""
+    seen: set[str] = set()
+    cats: list[str] = []
+    for msg in reversed(history[-(n_turns * 2):]):
+        for c in _categories_in_text(msg.get("content", "")):
+            if c not in seen:
+                cats.append(c)
+                seen.add(c)
+    return cats
+
+
+def _is_drill_down(q: str, has_categories: bool) -> bool:
+    if any(s in q for s in _DRILL_STRONG):
+        return True
+    if has_categories and any(s in q for s in _DRILL_WEAK):
+        return True
+    return False
+
+
+@dataclass
+class _Intent:
+    categories: list[str]
+    period_label: str
+    period_sql: str
+    drill_down: bool
+    needs_income: bool
+    needs_investment: bool
+    needs_comparison: bool
+
+
+_DEFAULT_PERIOD = (
+    "last 2 months",
+    "date >= date('now', '-60 days')",
+)
+
+
+def _parse_intent(query: str, history: list[dict]) -> _Intent:
+    q = query.lower()
+
+    # Categories from current query
+    cats = _categories_in_text(q)
+
+    # Drill-down intent
+    drill = _is_drill_down(q, bool(cats))
+
+    # If drill-down but no explicit category, inherit from history
+    if drill and not cats:
+        cats = _inherit_categories_from_history(history)
+
+    # Time period: current query first, then history, then default
+    period = _detect_period(q)
+    if period is None and (drill or cats):
+        period = _inherit_period_from_history(history)
+    if period is None:
+        period = _DEFAULT_PERIOD
+    period_label, period_sql = period
+
+    needs_income = any(w in q for w in [
+        "income", "salary", "paycheck", "payroll", "earn",
+        "direct deposit", "how much did i make", "how much i made",
+    ])
+    needs_investment = any(w in q for w in [
+        "stock", "holding", "holdings", "portfolio", "robinhood",
+        "schwab", "fidelity", "401k", "brokerage", "invest",
+    ])
+    needs_comparison = any(w in q for w in [
+        "compare", " vs ", "versus", "difference between",
+        "more than last", "less than last", "change from last",
+        "month over month", "month-over-month",
+    ])
+
+    return _Intent(
+        categories=cats,
+        period_label=period_label,
+        period_sql=period_sql,
+        drill_down=drill,
+        needs_income=needs_income,
+        needs_investment=needs_investment,
+        needs_comparison=needs_comparison,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Context builders
+# ---------------------------------------------------------------------------
+
+def _ctx_balances(conn) -> list[str]:
+    teller = conn.execute(
+        """SELECT ta.institution, ta.name, ta.type, ta.subtype, ta.balance_ledger as bal
            FROM teller_accounts ta
            JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
            WHERE te.status = 'active'
            ORDER BY ta.institution, ta.type, ta.name"""
     ).fetchall()
-    plaid_rows = conn.execute(
-        """SELECT institution, name, type, subtype, balance_current as balance
+    plaid = conn.execute(
+        """SELECT institution, name, type, subtype, balance_current as bal
            FROM plaid_accounts ORDER BY institution, type, name"""
     ).fetchall()
-    all_accounts = [dict(r) for r in teller_rows] + [dict(r) for r in plaid_rows]
-    all_accounts.sort(key=lambda r: (r["institution"], r["type"], r["name"]))
-    if all_accounts:
-        assets, liabilities = 0.0, 0.0
-        lines.append("Account balances:")
-        for r in all_accounts:
-            bal = r["balance"]
-            bal_str = f"${abs(bal):,.2f}" if bal is not None else "N/A"
-            tag = " [liability]" if r["type"] in ("credit", "loan") else ""
-            lines.append(f"  {r['institution']} — {r['name']} ({r['type']}): {bal_str}{tag}")
-            if bal:
-                if r["type"] in ("credit", "loan"):
-                    liabilities += abs(bal)
-                else:
-                    assets += abs(bal)
-        lines.append(f"  Net worth: ${assets - liabilities:,.2f} (assets ${assets:,.2f} - liabilities ${liabilities:,.2f})")
 
-    # This month spend summary
-    month_rows = conn.execute(
-        """SELECT category, ROUND(SUM(amount),2) as total
+    all_accs = sorted(
+        [dict(r) for r in teller] + [dict(r) for r in plaid],
+        key=lambda r: (r["institution"], r["type"], r["name"]),
+    )
+    if not all_accs:
+        return []
+
+    lines = ["=== Account Balances ==="]
+    assets = liabilities = 0.0
+    for r in all_accs:
+        bal = r["bal"] or 0.0
+        bal_str = f"${abs(bal):,.2f}" if r["bal"] is not None else "N/A"
+        tag = " [LIABILITY]" if r["type"] in ("credit", "loan") else ""
+        lines.append(f"  {r['institution']} — {r['name']} ({r['type']}): {bal_str}{tag}")
+        if r["type"] in ("credit", "loan"):
+            liabilities += abs(bal)
+        else:
+            assets += abs(bal)
+    lines.append(
+        f"  >> Net worth: ${assets - liabilities:,.2f}"
+        f"  (assets ${assets:,.2f} − liabilities ${liabilities:,.2f})"
+    )
+    return lines
+
+
+def _ctx_spend_summary(conn) -> list[str]:
+    """This month + last month spend by ALL categories with transaction counts."""
+    lines = ["=== Spending Summary ==="]
+
+    this_rows = conn.execute(
+        """SELECT category, ROUND(SUM(amount),2) as total, COUNT(*) as cnt
            FROM transactions
            WHERE transaction_type='debit'
              AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
-           GROUP BY category ORDER BY total DESC LIMIT 8"""
+           GROUP BY category ORDER BY total DESC"""
     ).fetchall()
-    if month_rows:
-        lines.append("This month's spend by category:")
-        for r in month_rows:
-            lines.append(f"  {r['category']}: ${r['total']:,.2f}")
 
-    # Last month spend summary
-    last_month_rows = conn.execute(
-        """SELECT category, ROUND(SUM(amount),2) as total
+    last_rows = conn.execute(
+        """SELECT category, ROUND(SUM(amount),2) as total, COUNT(*) as cnt
            FROM transactions
            WHERE transaction_type='debit'
              AND strftime('%Y-%m', date) = strftime('%Y-%m', date('now', '-1 month'))
-           GROUP BY category ORDER BY total DESC LIMIT 8"""
+           GROUP BY category ORDER BY total DESC"""
     ).fetchall()
-    if last_month_rows:
-        lines.append("Last month's spend by category:")
-        for r in last_month_rows:
-            lines.append(f"  {r['category']}: ${r['total']:,.2f}")
 
-    # Recent transactions (last 15)
-    recent = conn.execute(
-        """SELECT date, description, amount, category, transaction_type
-           FROM transactions ORDER BY date DESC LIMIT 15"""
-    ).fetchall()
-    if recent:
-        lines.append("Most recent transactions:")
-        for r in recent:
-            sign = "-" if r["transaction_type"] == "debit" else "+"
-            lines.append(f"  {r['date']} | {r['description']} | {sign}${r['amount']:,.2f} [{r['category']}]")
+    if this_rows:
+        grand = sum(r["total"] for r in this_rows)
+        lines.append(f"This month — ${grand:,.2f} total spend:")
+        for r in this_rows:
+            lines.append(f"  {r['category']}: ${r['total']:,.2f} ({r['cnt']} txns)")
 
-    # Unread alerts (last 10)
-    alert_rows = conn.execute(
-        """SELECT alert_type, severity, description, created_at
-           FROM alerts ORDER BY created_at DESC LIMIT 10"""
-    ).fetchall()
-    if alert_rows:
-        lines.append("Recent alerts:")
-        for r in alert_rows:
-            lines.append(f"  [{r['severity'].upper()}] {r['description']} ({r['created_at'][:10]})")
+    if last_rows:
+        grand = sum(r["total"] for r in last_rows)
+        lines.append(f"Last month — ${grand:,.2f} total spend:")
+        for r in last_rows:
+            lines.append(f"  {r['category']}: ${r['total']:,.2f} ({r['cnt']} txns)")
 
     return lines
 
 
-_CATEGORY_MAP: dict[str, str] = {
-    "dining": "Dining", "restaurant": "Dining", "restaurants": "Dining",
-    "groceries": "Groceries", "grocery": "Groceries",
-    "travel": "Travel", "hotel": "Travel", "hotels": "Travel", "flights": "Travel", "flight": "Travel",
-    "utilities": "Utilities", "utility": "Utilities",
-    "subscriptions": "Subscriptions", "subscription": "Subscriptions",
-    "shopping": "Shopping",
-    "rent": "Rent",
-    "healthcare": "Healthcare", "medical": "Healthcare",
-    "insurance": "Insurance",
-    "education": "Education",
-    "fees": "Fees & Interest", "interest": "Fees & Interest",
-    "transfer": "Transfer", "transfers": "Transfer",
-    "emis": "EMIs", "emi": "EMIs", "loans": "EMIs",
-    "miscellaneous": "Miscellaneous", "misc": "Miscellaneous",
-    "investments": "Investments",
-}
-
-
-def _detect_category(q: str) -> str | None:
-    """Return the DB category name if the query targets a specific spend category."""
-    for keyword, cat in _CATEGORY_MAP.items():
-        if keyword in q:
-            return cat
-    return None
-
-
-def _detect_period(q: str) -> tuple[str, str]:
-    """Return (period_label, SQL WHERE clause fragment for date column)."""
-    if "last month" in q or "previous month" in q:
-        return (
-            "last month",
-            "strftime('%Y-%m', date) = strftime('%Y-%m', date('now', '-1 month'))"
+def _ctx_recent_transactions(conn, limit: int = 30) -> list[str]:
+    rows = conn.execute(
+        """SELECT date, description, amount, category, transaction_type
+           FROM transactions ORDER BY date DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    if not rows:
+        return []
+    lines = [f"=== Most Recent {limit} Transactions ==="]
+    for r in rows:
+        sign = "-" if r["transaction_type"] == "debit" else "+"
+        lines.append(
+            f"  {r['date']} | {r['description']} | {sign}${r['amount']:,.2f} [{r['category']}]"
         )
-    if "this month" in q or "current month" in q:
-        return (
-            "this month",
-            "strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"
-        )
-    if "last 30 days" in q or "past 30 days" in q or "past month" in q:
-        return "last 30 days", "date >= date('now', '-30 days')"
-    if "last 60 days" in q or "past 60 days" in q or "past 2 months" in q:
-        return "last 60 days", "date >= date('now', '-60 days')"
-    if "last 90 days" in q or "past 90 days" in q or "past 3 months" in q:
-        return "last 90 days", "date >= date('now', '-90 days')"
-    if "last week" in q or "past week" in q:
-        return "last 7 days", "date >= date('now', '-7 days')"
-    if "last year" in q or "past year" in q:
-        return "last year", "date >= date('now', '-365 days')"
-    # Default: last 2 months so context is recent but not truncated to 15 rows
-    return "last 2 months", "date >= date('now', '-60 days')"
+    return lines
 
 
-def _extended_context(query: str, conn) -> list[str]:
-    """Keyword-triggered additional context on top of base."""
-    q = query.lower()
+def _ctx_category_drill(categories: list[str], period_label: str, period_sql: str, conn) -> list[str]:
+    """ALL transactions for each requested category in the given period."""
     lines = []
-
-    # Category-specific transaction drill-down
-    # Triggered when query asks about transactions in a specific category
-    target_cat = _detect_category(q)
-    drill_keywords = ["transaction", "transactions", "txn", "txns", "spent", "spend", "spending",
-                      "show", "list", "give", "all", "breakdown", "detail", "details",
-                      "amounting", "amount", "how much", "charges", "charge"]
-    if target_cat and any(w in q for w in drill_keywords):
-        period_label, period_sql = _detect_period(q)
+    for cat in categories:
         rows = conn.execute(
-            f"""SELECT date, description, ROUND(amount,2) as amount, category
+            f"""SELECT date, description, ROUND(amount,2) as amount
                 FROM transactions
-                WHERE transaction_type='debit'
-                  AND category = ?
-                  AND {period_sql}
+                WHERE transaction_type='debit' AND category=? AND {period_sql}
                 ORDER BY date DESC""",
-            (target_cat,),
+            (cat,),
         ).fetchall()
         if rows:
             total = sum(r["amount"] for r in rows)
-            lines.append(f"All {target_cat} transactions ({period_label}) — {len(rows)} transactions totalling ${total:,.2f}:")
+            lines.append(
+                f"=== {cat} — {period_label} "
+                f"({len(rows)} transactions, ${total:,.2f} total) ==="
+            )
             for r in rows:
                 lines.append(f"  {r['date']} | {r['description']} | -${r['amount']:,.2f}")
         else:
-            lines.append(f"No {target_cat} transactions found for {period_label}.")
-
-    # Income
-    if any(w in q for w in ["income", "salary", "paycheck", "payroll", "earn", "deposit", "direct deposit"]):
-        rows = conn.execute(
-            """SELECT ROUND(SUM(amount),2) as total, strftime('%Y-%m', date) as month
-               FROM transactions
-               WHERE transaction_type='credit' AND category='Income'
-               GROUP BY month ORDER BY month DESC LIMIT 6"""
-        ).fetchall()
-        if rows:
-            lines.append("Income by month:")
-            for r in rows:
-                lines.append(f"  {r['month']}: ${r['total']:,.2f}")
-        else:
-            lines.append("Income: No income transactions found. BofA (payroll account) may need reconnecting.")
-
-    # EMIs
-    if any(w in q for w in ["emi", "loan payment", "repay", "installment"]):
-        rows = conn.execute(
-            """SELECT description, amount, date FROM transactions
-               WHERE category='EMIs' AND transaction_type='debit'
-               ORDER BY date DESC LIMIT 10"""
-        ).fetchall()
-        if rows:
-            lines.append("EMI transactions:")
-            for r in rows:
-                lines.append(f"  {r['date']} | {r['description']} | ${r['amount']:,.2f}")
-
-    # Subscriptions
-    if any(w in q for w in ["subscription", "netflix", "spotify", "hulu", "recurring charge"]):
-        rows = conn.execute(
-            """SELECT description, amount, date FROM transactions
-               WHERE category='Subscriptions' AND transaction_type='debit'
-               ORDER BY date DESC LIMIT 10"""
-        ).fetchall()
-        if rows:
-            lines.append("Subscription charges:")
-            for r in rows:
-                lines.append(f"  {r['date']} | {r['description']} | ${r['amount']:,.2f}")
-
-    # Investments / holdings
-    if any(w in q for w in ["stock", "holding", "portfolio", "investment", "robinhood", "schwab", "fidelity", "401k"]):
-        rows = conn.execute(
-            """SELECT broker, ticker, quantity, current_price, market_value, gain_loss
-               FROM plaid_holdings ORDER BY broker, market_value DESC LIMIT 20"""
-        ).fetchall()
-        if rows:
-            lines.append("Investment holdings:")
-            for r in rows:
-                gl = f" (P/L: ${r['gain_loss']:,.2f})" if r["gain_loss"] is not None else ""
-                lines.append(f"  {r['broker']} — {r['ticker']}: {r['quantity']} @ ${r['current_price']:,.2f} = ${r['market_value']:,.2f}{gl}")
-
-    # All-time category totals
-    if any(w in q for w in ["all time", "overall", "total ever", "historically"]):
-        rows = conn.execute(
-            """SELECT category, ROUND(SUM(amount),2) as total
-               FROM transactions WHERE transaction_type='debit'
-               GROUP BY category ORDER BY total DESC"""
-        ).fetchall()
-        if rows:
-            lines.append("All-time spend by category:")
-            for r in rows:
-                lines.append(f"  {r['category']}: ${r['total']:,.2f}")
-
+            lines.append(f"=== {cat} — {period_label}: no transactions found ===")
     return lines
 
 
-def _sql_context(query: str) -> str:
+def _ctx_comparison(conn) -> list[str]:
+    rows = conn.execute(
+        """SELECT
+             category,
+             ROUND(SUM(CASE WHEN strftime('%Y-%m',date)=strftime('%Y-%m','now')
+                            THEN amount ELSE 0 END), 2) as this_m,
+             ROUND(SUM(CASE WHEN strftime('%Y-%m',date)=strftime('%Y-%m',date('now','-1 month'))
+                            THEN amount ELSE 0 END), 2) as last_m
+           FROM transactions
+           WHERE transaction_type='debit' AND date >= date('now','-60 days')
+           GROUP BY category HAVING this_m > 0 OR last_m > 0
+           ORDER BY (this_m + last_m) DESC"""
+    ).fetchall()
+    if not rows:
+        return []
+    lines = ["=== Month-over-Month Comparison ===",
+             "  Category                | This Month   | Last Month   | Change"]
+    for r in rows:
+        change = r["this_m"] - r["last_m"]
+        arrow = "▲" if change > 0 else ("▼" if change < 0 else "—")
+        lines.append(
+            f"  {r['category']:<24}| ${r['this_m']:>10,.2f} | ${r['last_m']:>10,.2f}"
+            f" | {arrow} ${abs(change):,.2f}"
+        )
+    return lines
+
+
+def _ctx_income(conn) -> list[str]:
+    rows = conn.execute(
+        """SELECT strftime('%Y-%m', date) as month,
+                  ROUND(SUM(amount),2) as total, COUNT(*) as cnt
+           FROM transactions
+           WHERE transaction_type='credit' AND category='Income'
+           GROUP BY month ORDER BY month DESC LIMIT 12"""
+    ).fetchall()
+    if not rows:
+        return ["=== Income === No income transactions found. "
+                "(BofA payroll account may need reconnecting in Settings.)"]
+    lines = ["=== Income History ==="]
+    for r in rows:
+        lines.append(f"  {r['month']}: ${r['total']:,.2f} ({r['cnt']} deposits)")
+    return lines
+
+
+def _ctx_investments(conn) -> list[str]:
+    rows = conn.execute(
+        """SELECT broker, ticker, quantity, current_price, market_value,
+                  gain_loss, gain_loss_day
+           FROM plaid_holdings ORDER BY broker, market_value DESC"""
+    ).fetchall()
+    if not rows:
+        return ["=== Investments — No holdings data ==="]
+    lines = ["=== Investment Holdings ==="]
+    current_broker = None
+    broker_total = 0.0
+    for r in rows:
+        if r["broker"] != current_broker:
+            if current_broker:
+                lines.append(f"  {current_broker} subtotal: ${broker_total:,.2f}")
+            current_broker = r["broker"]
+            broker_total = 0.0
+            lines.append(f"  [{r['broker']}]")
+        mv = r["market_value"] or 0.0
+        broker_total += mv
+        day_gl = f" | day: ${r['gain_loss_day']:,.2f}" if r.get("gain_loss_day") else ""
+        lines.append(
+            f"    {r['ticker']}: {r['quantity']} @ ${r['current_price']:,.2f}"
+            f" = ${mv:,.2f}{day_gl}"
+        )
+    if current_broker:
+        lines.append(f"  {current_broker} subtotal: ${broker_total:,.2f}")
+    return lines
+
+
+def _ctx_alerts(conn, limit: int = 10) -> list[str]:
+    rows = conn.execute(
+        """SELECT alert_type, severity, description, created_at
+           FROM alerts ORDER BY created_at DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    if not rows:
+        return []
+    lines = ["=== Recent Alerts ==="]
+    for r in rows:
+        lines.append(
+            f"  [{r['severity'].upper()}] {r['alert_type']}: "
+            f"{r['description']} ({r['created_at'][:10]})"
+        )
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Context assembly
+# ---------------------------------------------------------------------------
+
+def _build_context(query: str, history: list[dict] | None, conn) -> str:
+    history = history or []
+    intent = _parse_intent(query, history)
+
+    sections: list[str] = []
+
+    # Always: balances
+    sections.extend(_ctx_balances(conn))
+
+    # Always: spend summary (all categories, this + last month)
+    sections.extend(_ctx_spend_summary(conn))
+
+    # Month comparison if asked
+    if intent.needs_comparison:
+        sections.extend(_ctx_comparison(conn))
+
+    # Category drill-down: full transaction list
+    if intent.categories and intent.drill_down:
+        sections.extend(_ctx_category_drill(
+            intent.categories, intent.period_label, intent.period_sql, conn
+        ))
+    elif intent.categories and not intent.drill_down:
+        # User asked about a category (e.g. "how much did I spend on dining?")
+        # Spend summary already covers this month/last month.
+        # Add the full period breakdown if they specified a period beyond that.
+        if intent.period_label not in ("this month", "last month", "last 2 months"):
+            sections.extend(_ctx_category_drill(
+                intent.categories, intent.period_label, intent.period_sql, conn
+            ))
+
+    # Recent transactions: skip if we already injected full category data
+    if not (intent.categories and intent.drill_down):
+        sections.extend(_ctx_recent_transactions(conn, limit=30))
+
+    # Income history
+    if intent.needs_income:
+        sections.extend(_ctx_income(conn))
+
+    # Investment holdings
+    if intent.needs_investment:
+        sections.extend(_ctx_investments(conn))
+
+    # Recent alerts — always include (compact)
+    sections.extend(_ctx_alerts(conn, limit=10))
+
+    return "\n".join(sections)
+
+
+def _sql_context(query: str, history: list[dict] | None = None) -> str:
     with db() as conn:
-        lines = _base_context(conn)
-        lines += _extended_context(query, conn)
-    return "\n".join(lines)
+        return _build_context(query, history, conn)
 
 
 # ---------------------------------------------------------------------------
-# Main query function
+# Main query entry point
 # ---------------------------------------------------------------------------
 
-def query(user_query: str, top_k: int = 5, history: list[dict] | None = None) -> QueryResult:
-    # 1. Structured DB context — base always included, extended keyword-triggered
-    sql_ctx = _sql_context(user_query)
+def query(user_query: str, top_k: int = 3, history: list[dict] | None = None) -> QueryResult:
+    with db() as conn:
+        sql_ctx = _build_context(user_query, history, conn)
 
-    # 2. FAISS retrieval (supplementary document context)
+    # FAISS supplementary context (reduced top_k since DB context is now comprehensive)
     chunks = search(user_query, top_k=top_k)
     low_confidence = any(c.get("score", 1.0) < 0.5 for c in chunks)
 
     rag_ctx = "\n\n".join(
-        f"[Source: {c.get('source','?')}] {c['text']}"
+        f"[Source: {c.get('source', '?')}] {c['text']}"
         for c in chunks if c.get("text")
     )
 
-    # 3. Build context block — structured data first
-    context_parts = []
+    context_parts: list[str] = []
     if sql_ctx:
-        context_parts.append(f"=== Your Financial Data ===\n{sql_ctx}")
+        context_parts.append(sql_ctx)
     if rag_ctx:
-        context_parts.append(f"=== Document Context ===\n{rag_ctx}")
+        context_parts.append(f"=== Additional Context ===\n{rag_ctx}")
 
     if not context_parts:
         return QueryResult(
-            answer="I don't have enough financial data to answer that question yet. "
-                   "Please connect your accounts in Settings.",
+            answer=(
+                "I don't have enough financial data yet. "
+                "Please connect your accounts in Settings and run a sync."
+            ),
             low_confidence=True,
         )
 
     context = "\n\n".join(context_parts)
-    prompt = f"Context:\n{context}\n\nQuestion: {user_query}\n\nAnswer:"
+    prompt = f"Financial Context:\n{context}\n\nUser Question: {user_query}\n\nAnswer:"
 
-    answer = complete(prompt, max_tokens=512, system=SYSTEM_PROMPT, history=history)
+    answer = complete(prompt, max_tokens=1000, system=SYSTEM_PROMPT, history=history)
 
     return QueryResult(
         answer=answer,
