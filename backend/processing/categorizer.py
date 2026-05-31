@@ -18,19 +18,44 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 RULES: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"big\s*bazaar|dmart|reliance\s*fresh|zepto|blinkit|grofer|swiggy\s*instamart|nature['\s]s\s*basket|spencer|lulu|bigbasket|more\s*supermart", re.I), "Groceries"),
-    (re.compile(r"swiggy|zomato|domino|pizza\s*hut|mcdonald|kfc|burger\s*king|cafe\s*coffee|starbucks|subway|haldiram|barbeque\s*nation|restaurant|eatery|bistro|dine", re.I), "Dining"),
-    (re.compile(r"uber|ola\b|rapido|metro|irctc|indian\s*railways|makemytrip|redbus|yatra|cleartrip|indigo|air\s*india|spicejet|vistara|goair|petrol|fuel|hp\s*petrol|indian\s*oil|bharat\s*petroleum", re.I), "Travel"),
-    (re.compile(r"electricity|bescom|msedcl|tata\s*power|adani\s*electricity|water\s*board|bwssb|gas\s*bill|mahanagar\s*gas|igl\b|piped\s*gas", re.I), "Utilities"),
-    (re.compile(r"\bjio\b|airtel|vodafone|vi\b|bsnl|tata\s*sky|dish\s*tv|sun\s*direct|netflix|amazon\s*prime|hotstar|spotify|youtube\s*premium|zee5|sony\s*liv|voot", re.I), "Subscriptions"),
-    (re.compile(r"lic\b|hdfc\s*life|icici\s*pru|bajaj\s*allianz|star\s*health|niva\s*bupa|care\s*health|tata\s*aia|max\s*life|kotak\s*life|sbi\s*life|insurance|insure", re.I), "Insurance"),
-    (re.compile(r"\bemi\b|loan\s*repay|bajaj\s*fin|home\s*loan|car\s*loan|personal\s*loan|hdfc\s*bank\s*emi|icicilombard|axis\s*bank\s*loan|emi\s*debit", re.I), "EMIs"),
-    (re.compile(r"\brent\b|house\s*rent|rental|pg\s*rent|accommodation|lease", re.I), "Rent"),
-    (re.compile(r"amazon|flipkart|myntra|ajio|nykaa|meesho|snapdeal|shopify|tatacliq|croma|vijay\s*sales|reliance\s*digital", re.I), "Shopping"),
-    (re.compile(r"apollo|fortis|medplus|1mg\b|pharmeasy|netmeds|hospital|clinic|pharmacy|diagnostic|lab\s*test|dr\.", re.I), "Healthcare"),
-    (re.compile(r"udemy|coursera|byju|unacademy|vedantu|school\s*fee|college\s*fee|tuition|exam\s*fee", re.I), "Education"),
-    (re.compile(r"direct\s*deposit|salary|neft\s*cr|rtgs\s*cr|credit\s*salary|payroll|paylocity|stipend", re.I), "Income"),
-    (re.compile(r"payment\s*thank\s*you|autopay|bill\s*pay|balance\s*payment|thank\s*you\s*payment|online\s*payment|web\s*payment|mobile\s*payment|ach\s*payment|wire\s*transfer|\bzelle\b|\bvenmo\b|\bpaypal\b|cc\s*payment|card\s*payment|citi\s*payment|chase\s*payment|capital\s*one\s*payment|wells\s*fargo\s*payment|bank\s*of\s*america\s*payment|bofa\s*payment|amex\s*payment", re.I), "Transfer"),
+    # Rent — must be before Travel/Utilities so Bilt housing payments are caught first
+    (re.compile(r"bilt\s*rewards|bilt\s*housing|bilt\s*rent|\brent\b|house\s*rent|rental|pg\s*rent|accommodation|lease", re.I), "Rent"),
+
+    # Groceries — US + India
+    (re.compile(r"whole\s*foods|trader\s*joe|kroger|safeway|wegmans|publix|costco|target\s*grocery|walmart|stop\s*&?\s*shop|aldi|lidl|fresh\s*market|sprouts|food\s*lion|market\s*basket|giant\s*food|h[-\s]?e[-\s]?b|hannaford|meijer|weis|big\s*bazaar|dmart|reliance\s*fresh|zepto|blinkit|grofer|swiggy\s*instamart|bigbasket", re.I), "Groceries"),
+
+    # Dining — US chains, TST* (Square/Toast POS prefix), food courts, India
+    (re.compile(r"\btst\*|\bsq\s*\*|chipotle|chick.fil|popeyes?|panda\s*express|olive\s*garden|red\s*lobster|applebee|outback|cheesecake\s*factory|shake\s*shack|five\s*guys|in-n-out|raising\s*cane|wingstop|waffle\s*house|ihop|denny|panera|dunkin|tim\s*horton|doordash|grubhub|uber\s*eats|seamless|instacart\s*food|swiggy|zomato|domino|pizza\s*hut|mcdonald|kfc|burger\s*king|starbucks|subway|restaurant|eatery|bistro|dine|bakery|cafe\b|coffee\b|bagel|sushi|ramen|poke\b|boba|smoothie|juice\s*bar|bar\s*&?\s*grill|tavern|brasserie|trattoria|pizzeria", re.I), "Dining"),
+
+    # Travel — hotels, airlines, rideshare, car rental, transit
+    (re.compile(r"hyatt|marriott|hilton|westin|sheraton|hampton\s*inn|holiday\s*inn|best\s*western|wyndham|radisson|kimpton|four\s*seasons|ritz\s*carlton|hotel\.?com|hotels\.?com|booking\.?com|expedia|airbnb|vrbo|kayak\s*hotel|priceline|hotelcom|uber\b|lyft|waymo|hertz|enterprise\s*rent|avis|budget\s*car|national\s*car|dollar\s*rent|thrifty\s*car|zipcar|amtrak|greyhound|megabus|flixbus|delta|united\s*air|american\s*air|southwest|jetblue|spirit\s*air|frontier\s*air|alaska\s*air|ola\b|rapido|irctc|indian\s*railways|makemytrip|redbus|indigo|air\s*india|spicejet|parking|eztoll|e-zpass|toll\b|sunpass|peach\s*pass|gas\s*station|shell\b|exxon|bp\b|chevron|circle\s*k|speedway|wawa|7-eleven\s*gas|petrol|fuel", re.I), "Travel"),
+
+    # Utilities — electric, water, internet, phone, municipal
+    (re.compile(r"electric|con\s*ed|coned|pge\b|pg&e|national\s*grid|eversource|xcel\s*energy|duke\s*energy|dominion\s*energy|water\s*authority|municipal\s*util|utility|utilities\s*authority|internet|comcast|xfinity|verizon\s*fios|spectrum\b|cox\s*comm|optimum|frontier\s*comm|rcn\b|honest\s*networks|at&t\b|att\b|verizon\b|t-mobile|cricket\s*wireless|metro\s*pcs|boost\s*mobile|electricity|bescom|msedcl|tata\s*power|water\s*board|gas\s*bill|mahanagar\s*gas|igl\b", re.I), "Utilities"),
+
+    # Subscriptions — streaming, SaaS, recurring digital
+    (re.compile(r"netflix|hulu|disney\+?|hbo\s*max|max\b.*stream|peacock|paramount\+?|apple\s*tv|amazon\s*prime|spotify|apple\s*music|pandora|tidal|youtube\s*premium|twitch|adobe|microsoft\s*365|office\s*365|google\s*one|dropbox|icloud|github|notion|slack|zoom\b|lastpass|1password|nytimes|wsj\b|washington\s*post|linkedin\s*premium|\bjio\b|airtel\s*post|vodafone|hotstar|zee5|sony\s*liv", re.I), "Subscriptions"),
+
+    # Insurance
+    (re.compile(r"geico|progressive\s*ins|state\s*farm|allstate|nationwide\s*ins|liberty\s*mutual|farmers\s*ins|usaa|travelers\s*ins|aetna|cigna|humana|unitedhealth|blue\s*cross|bcbs|oscar\s*health|kaiser|lic\b|hdfc\s*life|insurance|insure", re.I), "Insurance"),
+
+    # EMIs / loan payments
+    (re.compile(r"\bemi\b|loan\s*payment|loan\s*repay|auto\s*loan|car\s*loan|home\s*loan|mortgage|student\s*loan|navient|sallie\s*mae|nelnet|wells\s*fargo\s*loan|bajaj\s*fin|personal\s*loan", re.I), "EMIs"),
+
+    # Shopping — US + India
+    (re.compile(r"amazon(?!.*prime)|walmart(?!.*grocery)|target(?!.*grocery)|best\s*buy|apple\s*store|apple\.com\/shop|ikea|wayfair|home\s*depot|lowe['']?s|bed\s*bath|crate\s*&?\s*barrel|pottery\s*barn|williams\s*sonoma|nordstrom|macy['']?s|bloomingdale|gap\b|old\s*navy|h&m\b|zara\b|uniqlo|forever\s*21|tj\s*maxx|marshalls|ross\s*store|kohls|jcpenney|flipkart|myntra|ajio|nykaa|meesho|shopify", re.I), "Shopping"),
+
+    # Healthcare
+    (re.compile(r"cvs\b|walgreens|rite\s*aid|duane\s*reade|pharmacy|urgent\s*care|labcorp|quest\s*diag|hospital|medical\s*center|health\s*system|clinic|doctor|physician|dentist|optometrist|orthodont|apollo|fortis|medplus|1mg\b|pharmeasy", re.I), "Healthcare"),
+
+    # Education
+    (re.compile(r"udemy|coursera|skillshare|linkedin\s*learn|pluralsight|khan\s*academy|chegg|tutor|school\s*fee|college\s*fee|tuition|exam\s*fee|byju|unacademy", re.I), "Education"),
+
+    # Income — direct deposits, payroll
+    (re.compile(r"direct\s*deposit|payroll|paylocity|adp\b|gusto\b|salary|stipend|neft\s*cr|rtgs\s*cr|credit\s*salary", re.I), "Income"),
+
+    # Transfer — CC payments, ACH, P2P (must be last before Misc to catch broad patterns)
+    (re.compile(r"payment\s*thank\s*you|autopay|online\s*payment\s*thank|thank\s*you\s*payment|balance\s*payment|web\s*payment|mobile\s*payment|ach\s*(?:debit|credit|transfer)|wire\s*transfer|\bzelle\b|\bvenmo\b|\bpaypal\b|cc\s*payment|card\s*payment|citi\s*payment|chase\s*payment|capital\s*one\s*payment|wells\s*fargo\s*payment|bank\s*of\s*america\s*payment|bofa\s*payment|amex\s*payment|bill\s*pay", re.I), "Transfer"),
 ]
 
 def _load_valid_categories() -> set[str]:
