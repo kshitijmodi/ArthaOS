@@ -154,8 +154,12 @@ def _execute_track_total(params: dict, snapshot: dict) -> dict:
     delta = current - prev
 
     top = ", ".join(f"{r['category']} (${r['total']:,.0f})" for r in cats)
+    if delta > 0:
+        spend_line = f"New spend since last check: ${delta:,.2f} ({row['count']} transactions)."
+    else:
+        spend_line = f"No new spend since last check ({row['count']} transactions this month total)."
     summary = (
-        f"Spending update: ${delta:,.2f} new spend ({row['count']} transactions).\n"
+        f"{spend_line}\n"
         f"Month-to-date total: ${current:,.2f}\n"
         f"Top categories: {top}"
     )
