@@ -1,6 +1,6 @@
 # ArthaOS
 
-**ArthaOS** is a local-first, agentic AI personal finance system. It automatically ingests financial documents from your email and local folders, structures them into queryable data, and proactively monitors your finances — surfacing alerts and insights without waiting to be asked.
+**ArthaOS** is a local-first, agentic AI personal finance system for US-based accounts. It automatically ingests financial data from connected bank and investment accounts via Plaid and Teller, structures it into a queryable SQLite database, and proactively monitors your finances — surfacing alerts and insights without waiting to be asked.
 
 Query your finances in natural language via a modern web dashboard or WhatsApp. Runs at minimal to zero recurring cost using free API tiers.
 
@@ -10,15 +10,15 @@ Query your finances in natural language via a modern web dashboard or WhatsApp. 
 
 **Reactive (you ask):**
 - "How much did I spend on groceries last month?"
-- "List all recurring EMIs"
+- "What's my Fidelity 401k balance?"
 - "Show my highest expenses this quarter"
 - "Am I spending more this month than last month?"
 
 **Proactive (it tells you):**
 - "Your dining spend is 40% above your monthly average"
-- "Unusual transaction detected — ₹8,500 at an unrecognised merchant"
-- "Possible duplicate charge — Swiggy ₹450 appears twice within 3 days"
-- "Expected Jio bill not seen this month"
+- "Unusual transaction detected — $850 at an unrecognised merchant"
+- "Possible duplicate charge — same merchant + amount within 3 days"
+- "Expected recurring charge missing this month"
 
 ---
 
@@ -26,102 +26,101 @@ Query your finances in natural language via a modern web dashboard or WhatsApp. 
 
 | Component | Tool |
 |-----------|------|
-| PDF parsing | PyMuPDF, pdfplumber |
+| Bank/investment data | Plaid API (investments, CC, loans) + Teller API (checking, savings) |
 | Storage | SQLite |
-| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) |
-| Vector DB | FAISS |
-| LLM inference | Groq API / Gemini API — LLaMA 3 8B / Gemini Flash (free tier) |
-| Email ingestion | Gmail API (OAuth 2.0), Yahoo Mail (IMAP + app password) |
-| Scheduler | APScheduler (daily agent runs) |
-| File watcher | Python watchdog |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) + FAISS |
+| LLM inference | Groq API / Gemini API — LLaMA 3 / Gemini Flash (free tier) |
+| Scheduler | APScheduler (daily agent runs, 30-min sync polls) |
 | Backend API | FastAPI |
 | Frontend | Next.js 14 + Tailwind CSS + recharts |
 | WhatsApp layer | REA Communication Agent (whatsapp-web.js) |
 | Real-time alerts | FastAPI WebSocket |
+| Process management | PM2 |
 
 ---
 
 ## Architecture
 
-### RAG Flow
+### Query Flow
 ```
-User Query (Dashboard or WhatsApp)
+Dashboard AI chat
     ↓
-FastAPI receives query
+POST /query → pipeline.query()
     ↓
-SQL context (spend totals, EMIs, subscriptions) extracted first
+Base context always injected:
+  - All account balances (Teller + Plaid)
+  - This month + last month spend by category
+  - Last 15 transactions
+  - Recent alerts
     ↓
-FAISS similarity search for supplementary document context
++ FAISS similarity search (supplementary)
     ↓
-Context + Query → LLM (Groq / Gemini)
+Context + Query + History → LLM (Groq / Gemini)
     ↓
-Generated Answer → Dashboard or WhatsApp
+Answer → Dashboard
+```
+
+```
+WhatsApp message
+    ↓
+REA Communication Agent
+    ↓
+Starts with /finance?
+  ├── Yes → POST /finance → handle_finance_command()
+  │           ├── Structured sub-commands (balance, summary, alerts, etc.)
+  │           └── Free-form → RAG pipeline
+  └── No  → POST /whatsapp/query → handle_finance_command() [same engine]
+                └── REA spawns Claude Code CLI for code/engineering tasks
 ```
 
 ### Agent Flow
 ```
-Ingestion Complete / Daily Scheduled Trigger (07:30)
+Daily Schedule (13:30 ET) / Post-sync trigger
     ↓
-Load Recent Transactions from SQLite
-    ↓
-Run Detection Modules:
-  - Overspend Detector       (>25% above 30-day rolling average)
-  - Anomaly Detector         (>2x category average or unknown merchant ≥₹2000)
-  - Recurring Charge Monitor (missing or changed EMI/subscription)
+run_agent() — 10 detection modules:
+  - Overspend Detector       (>25% above 30-day rolling average per category)
+  - Anomaly Detector         (>2x category average or unknown merchant ≥$2000)
+  - Spend Pace Monitor       (projected monthly overspend)
+  - Weekly Velocity Check    (week-over-week acceleration)
+  - All-Time High Detector   (new personal spending records)
+  - Recurring Charge Monitor (missing or changed subscriptions/EMIs)
   - Duplicate Detector       (same merchant + amount within 7 days)
   - Monthly Budget Monitor   (on track to exceed prior month by >20%)
+  - High Credit Balance Alert
+  - Card Due Date Monitor
     ↓
 Write Alerts → SQLite Alerts Table
     ↓
-Push to Dashboard (WebSocket) + WhatsApp (high severity only)
+Push to Dashboard (WebSocket) + WhatsApp digest
 ```
 
-### Automated Ingestion Flow
+### Data Sync Flow
 ```
-Laptop startup → email fetcher catch-up
+APScheduler (every 30 minutes)
     ↓
-Read system_state table → fetch all emails since last_fetched_at
-Gmail (OAuth 2.0) + Yahoo (IMAP)
+Plaid sync: transactions, account balances, investment holdings
+Teller sync: account balances, transactions
     ↓
-Download PDF attachments from whitelisted senders → /data/statements/
+Categorize new transactions (keyword rules → learned rules → LLM fallback)
     ↓
-watchdog detects new files → ingestion pipeline
-    ↓
-Parse → Normalize → Validate → Categorize → Store → Embed
-    ↓
-Agent engine triggered (background thread)
-    ↓
-Update last_fetched_at in system_state
-```
-
-### WhatsApp Routing Flow (via REA)
-```
-User Personal WhatsApp
-    ↓
-REA Communication Agent (whatsapp-web.js)
-    ↓
-Message starts with /finance?
-  ├── Yes → ArthaOS FastAPI backend → RAG pipeline → answer
-  └── No  → REA Orchestration Agent (existing flow)
-    ↓
-REA Communication Agent → reply to user
+Update SQLite → trigger agent run if new data
 ```
 
 ---
 
 ## Data Model
 
-**Transactions:** `date`, `description`, `amount`, `currency`, `transaction_type`, `category`, `source_file`, `raw_text`, `confidence_score`
+**Transactions:** `date`, `description`, `amount`, `currency`, `transaction_type`, `category`, `category_source`
 
 **Alerts:** `alert_id`, `alert_type`, `severity`, `description`, `related_transactions`, `created_at`, `status`, `whatsapp_sent`, `snoozed_until`
 
-**Email tracking:** `email_id`, `sender`, `subject`, `fetched_at`, `attachment_file`, `mailbox` (Gmail / Yahoo), `status`
+**Teller Accounts:** `enrollment_id`, `institution`, `name`, `type`, `subtype`, `balance_ledger`, `last_synced_at`
 
-**System state:** `mailbox`, `last_fetched_at`, `status` — used for startup catch-up fetch
+**Plaid Accounts:** `institution`, `name`, `type`, `subtype`, `balance_current`, `last_synced_at`
 
-**Ingested files:** `file_hash`, `filename`, `file_size`, `status`, `failure_reason`, `transaction_count`, `verified`, `ingested_at`
+**Plaid Holdings:** `broker`, `ticker`, `quantity`, `current_price`, `market_value`, `gain_loss`, `gain_loss_day`
 
-**Category corrections:** `description_hash`, `description`, `category`, `corrected_at` — drives learned categorization rules
+**Scheduled Tasks:** `task_type`, `description`, `params`, `fire_at`, `repeat_interval`, `status`, `initiated_by`
 
 ---
 
@@ -129,7 +128,9 @@ REA Communication Agent → reply to user
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/query` | POST | NL query → RAG answer |
+| `/query` | POST | NL query → RAG answer (dashboard AI chat) |
+| `/finance` | POST | Finance slash command handler |
+| `/whatsapp/query` | POST | WhatsApp message entry point (via REA) |
 | `/transactions` | GET | Paginated, filtered, sortable transaction list |
 | `/transactions/{id}/category` | PATCH | Inline category correction |
 | `/transactions/bulk-categorize` | POST | Bulk category update |
@@ -139,18 +140,21 @@ REA Communication Agent → reply to user
 | `/alerts/{id}/snooze` | POST | Snooze an alert N days |
 | `/alerts/stats` | GET | Alert counts by status and severity |
 | `/dashboard/summary` | GET | Spend summary card data |
+| `/dashboard/accounts-summary` | GET | Net worth, balances, investment totals |
 | `/analytics/monthly-trend` | GET | 12-month spend trend |
 | `/analytics/category-breakdown` | GET | This month by category |
 | `/analytics/month-comparison` | GET | This month vs last month per category |
 | `/insights/affordability` | POST | Affordability check for a given amount |
 | `/insights/optimisation` | GET | Category-level spend optimisation suggestions |
 | `/insights/recommendations` | GET | Trend-based financial health recommendations |
-| `/ingestion/status` | GET | Mailbox state + recent/failed ingestions |
-| `/ingest/upload` | POST | Manual PDF upload |
-| `/ingest/fetch-email` | POST | Manually trigger email fetch |
+| `/plaid/connect` | POST | Link a Plaid account |
+| `/plaid/resync` | POST | Force re-sync all Plaid transactions |
+| `/teller/enroll` | POST | Enroll a Teller account |
+| `/teller/enrollments` | GET | List connected Teller institutions |
+| `/investments/holdings` | GET | All investment holdings by broker |
+| `/investments/reingest` | POST | Force re-parse investment data |
 | `/agent/run` | POST | Manually trigger agent detection run |
 | `/ws/alerts` | WebSocket | Real-time alert push to dashboard |
-| `/whatsapp/query` | POST | WhatsApp query entry point (via REA) |
 
 ---
 
@@ -158,23 +162,32 @@ REA Communication Agent → reply to user
 
 Dark mode finance aesthetic — data-dense, built with Next.js 14 + Tailwind CSS.
 
-| Panel | Tab | Description |
-|-------|-----|-------------|
-| **Alerts Panel** | Always visible | Unread alerts with severity colour coding. Dismiss, snooze. Real-time sync via WebSocket. |
-| **Spend Summary Cards** | Overview | Total spend this month vs last, delta %, top category, transaction count, upcoming EMIs. |
-| **Query Interface** | Overview | Chat-style natural language input with suggested prompts. Source references shown. |
-| **Ingestion Status** | Overview | Last fetch timestamps (Gmail + Yahoo), documents processed, parsing failures. |
-| **Analytics Panel** | Analytics | Monthly trend area chart, category donut, month-over-month bar chart (recharts). |
-| **Transaction Table** | Transactions | Full paginated list. Filter by category/type, sort, inline category edit dropdown. |
-| **Insights Panel** | Insights | Financial health cards, affordability check tool, optimisation opportunities with progress bars. |
+| Panel | Description |
+|-------|-------------|
+| **KPI Cards** | Net worth, income, spend, investments — month-aware |
+| **Alerts Panel** | Unread alerts with severity colour coding. Dismiss, snooze. Real-time via WebSocket. |
+| **AI Chat** | Natural language queries with conversation history. Always has full financial context. |
+| **Analytics Panel** | Monthly trend chart, category donut, month-over-month comparison (recharts) |
+| **Investments Panel** | Broker tabs, holdings table, P/L where available |
+| **Transaction Table** | Full paginated list with inline category editing |
+| **Insights Panel** | Affordability check, optimisation suggestions, trend recommendations |
+| **Ingestion Status** | Connected accounts, sync status, Plaid Reset button |
 
 ---
 
 ## Expense Categories
 
-Groceries · Rent · Utilities · Dining · Travel · Insurance · EMIs · Subscriptions · Entertainment · Shopping · Miscellaneous
+Rent · Groceries · Dining · Travel · Utilities · Subscriptions · Insurance · EMIs · Shopping · Healthcare · Education · Investments · Income · Transfer · Fees & Interest · Miscellaneous
 
-Categorization priority: user correction → learned rules (derived from past corrections) → keyword rules → LLM fallback. Corrections stored in SQLite and used to auto-refine future classifications.
+Categorization priority: user correction → learned rules (from past corrections) → keyword rules → LLM fallback.
+
+Key US merchant mappings:
+- **Bilt Rewards / Bilt Housing** → Rent
+- **TST\* / SQ\*** (Square/Toast POS) → Dining
+- **Hotel chains, airlines, Turo, SpotHero** → Travel
+- **AT&T, Comcast, Honest Networks** → Utilities
+- **Claude.ai, Netflix, Spotify** → Subscriptions
+- **Seven Corners** → Insurance
 
 ---
 
@@ -185,11 +198,9 @@ Categorization priority: user correction → learned rules (derived from past co
 - Python 3.10+
 - Node.js 18+
 - Groq API key **or** Gemini API key (free tier)
-- Gmail API credentials (OAuth 2.0) — optional if using Yahoo only
-- Yahoo Mail app password (IMAP enabled) — optional if using Gmail only
-- REA Communication Agent running — only needed for WhatsApp integration
-
----
+- Plaid API credentials (client_id + secret)
+- Teller API credentials (optional — for Teller-connected banks)
+- REA Communication Agent — only needed for WhatsApp integration
 
 ### 1. Clone and configure
 
@@ -199,145 +210,104 @@ cd ArthaOS
 cp .env.example .env
 ```
 
-Edit `.env` and fill in at minimum:
+Edit `.env`:
 
 ```env
 LLM_PROVIDER=groq
-GROQ_API_KEY=your_key_here        # get free key at console.groq.com
+GROQ_API_KEY=your_key_here
+
+PLAID_CLIENT_ID=your_plaid_client_id
+PLAID_SECRET=your_plaid_secret
+PLAID_ENV=production
+
+TELLER_APP_ID=your_teller_app_id      # optional
+TELLER_CERT_PATH=/path/to/cert.pem    # optional
+TELLER_KEY_PATH=/path/to/key.pem      # optional
 ```
-
-For email ingestion, also add your Yahoo or Gmail credentials (see sections below).
-
----
 
 ### 2. Install Python dependencies
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-
-This installs FastAPI, PyMuPDF, pdfplumber, sentence-transformers, FAISS, Groq SDK, APScheduler, watchdog, and Google API clients. First run will download the `all-MiniLM-L6-v2` embedding model (~90 MB).
-
----
 
 ### 3. Install frontend dependencies
 
 ```bash
-cd frontend
-npm install
-cd ..
+cd frontend && npm install && cd ..
 ```
 
----
-
-### 4. Set up Gmail (optional)
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) → create a project
-2. Enable the **Gmail API**
-3. Create OAuth 2.0 credentials → Desktop app → download as `gmail_credentials.json`
-4. Place `gmail_credentials.json` in the project root
-5. On first run, a browser window will open to authorise access. The token is saved as `gmail_token.json` and auto-refreshed thereafter.
-
----
-
-### 5. Set up Yahoo Mail (optional)
-
-1. In your Yahoo account → Security → Generate app password
-2. Add to `.env`:
-   ```env
-   YAHOO_EMAIL=your_email@yahoo.com
-   YAHOO_APP_PASSWORD=your_app_password
-   ```
-
----
-
-### 6. Start the backend
+### 4. Start the backend
 
 ```bash
+source .venv/bin/activate
 python start.py
 ```
 
-This will:
-- Initialise the SQLite database at `data/arthaos.db`
-- Run a catch-up email fetch (all statements since last run)
-- Ingest any PDFs already in `data/statements/`
-- Start the FastAPI server at `http://localhost:8000`
-- Start the file watcher and daily scheduler
+FastAPI starts at `http://localhost:8000`.
 
----
-
-### 7. Start the frontend
-
-In a second terminal:
+### 5. Start the frontend
 
 ```bash
-cd frontend
-npm run dev
+cd frontend && npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open `http://localhost:3000`.
 
----
+### 6. Connect your accounts
 
-### 8. Upload your first bank statement
+Go to the dashboard → Settings → Connected Accounts:
+- **Plaid Link** — connect checking, savings, credit cards, investments, loans
+- **Teller Link** — connect supported US banks
 
-**Option A — drop a PDF:**
-Copy any bank statement PDF into `data/statements/`. The watchdog will detect it and ingest automatically within a few seconds.
-
-**Option B — dashboard upload:**
-Go to the Overview tab → Ingestion Status panel → upload button.
-
-**Option C — API:**
-```bash
-curl -X POST http://localhost:8000/ingest/upload \
-  -F "file=@/path/to/statement.pdf"
-```
-
----
-
-### 9. Manually trigger the agent (optional)
-
-The agent runs automatically after each ingestion and daily at 07:30. To run it manually:
+### 7. Manually trigger the agent (optional)
 
 ```bash
 curl -X POST http://localhost:8000/agent/run
 ```
 
----
+The agent runs automatically after each sync and daily at 13:30 ET.
 
-### 10. WhatsApp integration (optional)
+### 8. WhatsApp integration (optional)
 
-Requires the REA Communication Agent running on port 3001. Set in `.env`:
+Requires the REA Communication Agent. Set in `.env`:
 
 ```env
 REA_WEBHOOK_URL=http://localhost:3001/rea/incoming
 ```
 
-Once connected, send `/finance <your question>` on WhatsApp to query ArthaOS.
+Once connected, send `/finance <question>` on WhatsApp to query ArthaOS.
+Plain messages (no `/finance`) are handled by Claude Code CLI for engineering tasks.
 
 ---
 
-### Directory structure
+## Directory Structure
 
 ```
 ArthaOS/
 ├── backend/
-│   ├── agent/          # Detection engine, insights, notifier
+│   ├── agent/          # Detection engine, insights, notifier, task scheduler
 │   ├── embeddings/     # FAISS vector store
-│   ├── ingestion/      # Email fetcher, PDF parser, validator, pipeline, watcher
-│   ├── processing/     # Categorizer, normalizer
-│   ├── rag/            # Query pipeline, LLM client
+│   ├── plaid/          # Plaid API client + sync
+│   ├── teller/         # Teller API client + sync
+│   ├── processing/     # Categorizer (US merchant rules), normalizer
+│   ├── rag/            # Query pipeline, LLM client (Groq + Gemini)
 │   ├── storage/        # SQLite schema and connection manager
 │   ├── config.py
-│   ├── main.py         # FastAPI app
+│   ├── main.py         # FastAPI app + all endpoints
 │   └── scheduler.py
 ├── frontend/
 │   ├── app/            # Next.js app router
 │   ├── components/     # Dashboard panels
 │   ├── hooks/          # useWebSocket
 │   └── lib/            # API client, utils, types
+├── deploy/
+│   ├── sync.ps1        # Windows → GCP sync script
+│   └── ecosystem.linux.config.js
 ├── data/
-│   └── statements/     # Drop PDFs here for manual ingestion
+│   └── statements/     # Drop PDFs here (if ever needed)
 ├── eval/               # Evaluation dataset + runner
 ├── start.py            # One-command startup
 ├── requirements.txt
@@ -346,70 +316,20 @@ ArthaOS/
 
 ---
 
-## Evaluation
+## Known Limitations
 
-Run the built-in eval suite against a seeded database:
-
-```bash
-python eval/run_eval.py
-```
-
-Tests 8 Q&A pairs covering SQL aggregation, RAG retrieval, categorization, date parsing, and multi-period comparison. Must-pass set: `spend_jan`, `dining_category`, `emi_query`, `top_spend`, `subscriptions`.
-
----
-
-## Performance Targets
-
-| Component | Target |
-|-----------|--------|
-| Structured SQL queries | < 1 second |
-| RAG retrieval + LLM response | < 5 seconds |
-| Email fetch + ingestion cycle | < 2 minutes |
-| Agent evaluation run | < 30 seconds |
-| Dashboard load | < 2 seconds |
-| Alert WebSocket push | < 1 second |
+- **P/L Open always shows "—"** — Plaid does not return `cost_basis` for Robinhood, Schwab, or Fidelity accounts. Unrealized gain/loss cannot be calculated without it.
+- **No PDF ingestion** — This deployment uses only Plaid and Teller live connections. PDF parsing infrastructure exists in the codebase but is unused.
+- **Income may show $0** — If BofA (payroll account) Teller enrollment is broken, re-connect it in Settings → Connected Accounts.
 
 ---
 
 ## Privacy & Security
 
-- All financial data stored locally in SQLite — never sent to external services
-- LLM receives only sanitised context chunks, not raw statements or account details
-- Gmail OAuth 2.0 with automatic token refresh; Yahoo via IMAP app password
-- Per-mailbox email tracking in SQLite to prevent duplicate ingestion
-- WhatsApp routing shares REA's existing session — no separate WhatsApp session required
-
----
-
-## Roadmap
-
-**Phase 1 — Core System** ✅
-- [x] Project scaffold + dependencies
-- [x] SQLite schema (all tables)
-- [x] Email fetcher — Gmail + Yahoo with startup catch-up
-- [x] PDF parsing + validation
-- [x] Categorization engine
-- [x] Embeddings + FAISS store
-- [x] FastAPI backend (core endpoints)
-- [x] RAG query pipeline
-- [x] Next.js dashboard (alerts panel, query interface, transaction table)
-- [x] Validation + testing framework
-
-**Phase 2 — Agentic Layer** ✅
-- [x] Agent engine (5 detection modules)
-- [x] WhatsApp integration via REA Communication Agent
-- [x] Real-time alert sync via WebSocket
-- [x] Daily agent schedule
-- [x] Category correction UI
-- [x] Analytics panel (charts)
-
-**Phase 3 — Intelligence & Polish** ✅
-- [x] Improved categorization — learned rules + bulk correction + recategorize-misc
-- [x] Transaction normalizer (noise token stripping)
-- [x] Affordability estimation
-- [x] Spend optimisation suggestions
-- [x] Trend-based recommendations
-- [x] Insights dashboard panel
+- All financial data stored in SQLite on your own server — never sent to external services
+- LLM receives only structured context excerpts, never raw account credentials
+- Plaid and Teller access tokens stored locally in SQLite
+- WhatsApp routing uses REA's existing session — no separate WhatsApp session required
 
 ---
 
