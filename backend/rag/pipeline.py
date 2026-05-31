@@ -123,10 +123,88 @@ def _base_context(conn) -> list[str]:
     return lines
 
 
+_CATEGORY_MAP: dict[str, str] = {
+    "dining": "Dining", "restaurant": "Dining", "restaurants": "Dining",
+    "groceries": "Groceries", "grocery": "Groceries",
+    "travel": "Travel", "hotel": "Travel", "hotels": "Travel", "flights": "Travel", "flight": "Travel",
+    "utilities": "Utilities", "utility": "Utilities",
+    "subscriptions": "Subscriptions", "subscription": "Subscriptions",
+    "shopping": "Shopping",
+    "rent": "Rent",
+    "healthcare": "Healthcare", "medical": "Healthcare",
+    "insurance": "Insurance",
+    "education": "Education",
+    "fees": "Fees & Interest", "interest": "Fees & Interest",
+    "transfer": "Transfer", "transfers": "Transfer",
+    "emis": "EMIs", "emi": "EMIs", "loans": "EMIs",
+    "miscellaneous": "Miscellaneous", "misc": "Miscellaneous",
+    "investments": "Investments",
+}
+
+
+def _detect_category(q: str) -> str | None:
+    """Return the DB category name if the query targets a specific spend category."""
+    for keyword, cat in _CATEGORY_MAP.items():
+        if keyword in q:
+            return cat
+    return None
+
+
+def _detect_period(q: str) -> tuple[str, str]:
+    """Return (period_label, SQL WHERE clause fragment for date column)."""
+    if "last month" in q or "previous month" in q:
+        return (
+            "last month",
+            "strftime('%Y-%m', date) = strftime('%Y-%m', date('now', '-1 month'))"
+        )
+    if "this month" in q or "current month" in q:
+        return (
+            "this month",
+            "strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"
+        )
+    if "last 30 days" in q or "past 30 days" in q or "past month" in q:
+        return "last 30 days", "date >= date('now', '-30 days')"
+    if "last 60 days" in q or "past 60 days" in q or "past 2 months" in q:
+        return "last 60 days", "date >= date('now', '-60 days')"
+    if "last 90 days" in q or "past 90 days" in q or "past 3 months" in q:
+        return "last 90 days", "date >= date('now', '-90 days')"
+    if "last week" in q or "past week" in q:
+        return "last 7 days", "date >= date('now', '-7 days')"
+    if "last year" in q or "past year" in q:
+        return "last year", "date >= date('now', '-365 days')"
+    # Default: last 2 months so context is recent but not truncated to 15 rows
+    return "last 2 months", "date >= date('now', '-60 days')"
+
+
 def _extended_context(query: str, conn) -> list[str]:
     """Keyword-triggered additional context on top of base."""
     q = query.lower()
     lines = []
+
+    # Category-specific transaction drill-down
+    # Triggered when query asks about transactions in a specific category
+    target_cat = _detect_category(q)
+    drill_keywords = ["transaction", "transactions", "txn", "txns", "spent", "spend", "spending",
+                      "show", "list", "give", "all", "breakdown", "detail", "details",
+                      "amounting", "amount", "how much", "charges", "charge"]
+    if target_cat and any(w in q for w in drill_keywords):
+        period_label, period_sql = _detect_period(q)
+        rows = conn.execute(
+            f"""SELECT date, description, ROUND(amount,2) as amount, category
+                FROM transactions
+                WHERE transaction_type='debit'
+                  AND category = ?
+                  AND {period_sql}
+                ORDER BY date DESC""",
+            (target_cat,),
+        ).fetchall()
+        if rows:
+            total = sum(r["amount"] for r in rows)
+            lines.append(f"All {target_cat} transactions ({period_label}) — {len(rows)} transactions totalling ${total:,.2f}:")
+            for r in rows:
+                lines.append(f"  {r['date']} | {r['description']} | -${r['amount']:,.2f}")
+        else:
+            lines.append(f"No {target_cat} transactions found for {period_label}.")
 
     # Income
     if any(w in q for w in ["income", "salary", "paycheck", "payroll", "earn", "deposit", "direct deposit"]):
