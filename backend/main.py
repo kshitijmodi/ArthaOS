@@ -359,7 +359,8 @@ def accounts_summary(as_of: Optional[str] = None):
                                  {curr_col}
                                ) as bal
                         FROM teller_accounts a
-                        WHERE {account_type_filter}""",
+                        JOIN teller_enrollments te ON a.enrollment_id = te.enrollment_id
+                        WHERE te.status = 'active' AND {account_type_filter}""",
                     (as_of,)
                 ).fetchall()
                 return sum(abs(r["bal"] or 0) for r in rows)
@@ -368,8 +369,8 @@ def accounts_summary(as_of: Optional[str] = None):
             cc_balance   = round(period_balance("lower(a.type) IN ('credit','credit_card')", prefer_ledger=True), 2)
             loan_balance = round(period_balance("lower(a.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')", prefer_ledger=True), 2)
 
-            # Plaid has no balance history table — add current Plaid balances to period values
-            # (best approximation; Plaid CCs like Bilt were excluded entirely without this)
+            # Plaid has no balance history — add current Plaid balances as best approximation.
+            # Only CC (Bilt) matters here; no Plaid depository accounts exist for this user.
             p_bank_as_of = conn.execute(
                 """SELECT COALESCE(SUM(COALESCE(balance_available, balance_current, 0)), 0) as total
                    FROM plaid_accounts WHERE lower(type) = 'depository'"""
@@ -378,13 +379,21 @@ def accounts_summary(as_of: Optional[str] = None):
                 """SELECT COALESCE(SUM(MAX(0, COALESCE(balance_current, 0))), 0) as total
                    FROM plaid_accounts WHERE lower(type) = 'credit'"""
             ).fetchone()
+            p_loan_as_of = conn.execute(
+                """SELECT COALESCE(SUM(ABS(COALESCE(balance_current, 0))), 0) as total
+                   FROM plaid_accounts WHERE lower(type) = 'loan'"""
+            ).fetchone()
             bank_balance = round(bank_balance + (p_bank_as_of["total"] or 0), 2)
             cc_balance   = round(cc_balance   + (p_cc_as_of["total"]  or 0), 2)
+            loan_balance = round(loan_balance  + (p_loan_as_of["total"] or 0), 2)
         else:
-            # Teller depository
+            # Teller depository (active enrollments only)
             t_bank = conn.execute(
-                """SELECT COALESCE(SUM(COALESCE(balance_available, balance_ledger, 0)), 0) as total
-                   FROM teller_accounts WHERE lower(type) IN ('depository','checking','savings')"""
+                """SELECT COALESCE(SUM(COALESCE(a.balance_available, a.balance_ledger, 0)), 0) as total
+                   FROM teller_accounts a
+                   JOIN teller_enrollments te ON a.enrollment_id = te.enrollment_id
+                   WHERE te.status = 'active'
+                     AND lower(a.type) IN ('depository','checking','savings')"""
             ).fetchone()
             # Plaid depository
             p_bank = conn.execute(
@@ -393,22 +402,28 @@ def accounts_summary(as_of: Optional[str] = None):
             ).fetchone()
             bank_balance = round((t_bank["total"] or 0) + (p_bank["total"] or 0), 2)
 
-            # Teller CC — balance_ledger is amount owed; balance_available is remaining credit (wrong for this)
+            # Teller CC (active enrollments only)
             t_cc = conn.execute(
-                """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, 0))), 0) as total
-                   FROM teller_accounts WHERE lower(type) IN ('credit','credit_card')"""
+                """SELECT COALESCE(SUM(ABS(COALESCE(a.balance_ledger, 0))), 0) as total
+                   FROM teller_accounts a
+                   JOIN teller_enrollments te ON a.enrollment_id = te.enrollment_id
+                   WHERE te.status = 'active'
+                     AND lower(a.type) IN ('credit','credit_card')"""
             ).fetchone()
-            # Plaid CC — balance_current is amount owed (positive); cap at 0 to ignore credit balances
+            # Plaid CC
             p_cc = conn.execute(
                 """SELECT COALESCE(SUM(MAX(0, COALESCE(balance_current, 0))), 0) as total
                    FROM plaid_accounts WHERE lower(type) = 'credit'"""
             ).fetchone()
             cc_balance = round((t_cc["total"] or 0) + (p_cc["total"] or 0), 2)
 
-            # Teller loans
+            # Teller loans (active enrollments only)
             t_loan = conn.execute(
-                """SELECT COALESCE(SUM(ABS(COALESCE(balance_ledger, balance_available, 0))), 0) as total
-                   FROM teller_accounts WHERE lower(type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"""
+                """SELECT COALESCE(SUM(ABS(COALESCE(a.balance_ledger, a.balance_available, 0))), 0) as total
+                   FROM teller_accounts a
+                   JOIN teller_enrollments te ON a.enrollment_id = te.enrollment_id
+                   WHERE te.status = 'active'
+                     AND lower(a.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"""
             ).fetchone()
             # Plaid loans
             p_loan = conn.execute(
