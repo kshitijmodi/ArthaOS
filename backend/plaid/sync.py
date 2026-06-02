@@ -209,7 +209,22 @@ def sync_item(item_id: str, access_token: str, institution: str) -> dict:
         for sf in removed_source_files:
             conn.execute("DELETE FROM transactions WHERE source_file = ?", (sf,))
 
-        # Upsert investment holdings (today's snapshot)
+        # Upsert investment holdings (today's snapshot).
+        # Before inserting, remove any stale rows for the same broker+as_of_date
+        # that have a generic account name (e.g. "Investment") that was stored
+        # during an earlier sync before Plaid returned the real account name.
+        if prepared_holdings:
+            real_accounts = {h["acc_name"] for h in prepared_holdings}
+            conn.execute(
+                """DELETE FROM investment_holdings
+                   WHERE lower(broker) = lower(?)
+                     AND as_of_date = ?
+                     AND account NOT IN ({})""".format(
+                    ",".join("?" * len(real_accounts))
+                ),
+                [institution, today] + list(real_accounts),
+            )
+
         for h in prepared_holdings:
             conn.execute(
                 """INSERT INTO investment_holdings
