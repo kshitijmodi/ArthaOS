@@ -69,6 +69,15 @@ async def lifespan(app: FastAPI):
     # Start file watcher in background thread
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, lambda: start_watcher(block=True))
+    # Re-apply static rules to auto-categorized transactions so any rule changes
+    # (e.g. adding Investments before Transfer) take effect on existing data.
+    try:
+        from backend.processing.categorizer import recategorize_all
+        updated = recategorize_all()
+        if updated:
+            logger.info("[ArthaOS] Startup recategorization updated %d transactions", updated)
+    except Exception as exc:
+        logger.warning("[ArthaOS] Startup recategorization failed: %s", exc)
     # Start daily scheduler
     from backend.scheduler import start_scheduler, stop_scheduler
     start_scheduler()
