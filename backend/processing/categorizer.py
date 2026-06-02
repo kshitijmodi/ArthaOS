@@ -54,6 +54,9 @@ RULES: list[tuple[re.Pattern, str]] = [
     # Income — direct deposits, payroll
     (re.compile(r"direct\s*deposit|payroll|paylocity|adp\b|gusto\b|salary|stipend|neft\s*cr|rtgs\s*cr|credit\s*salary", re.I), "Income"),
 
+    # Investments — brokerages and investment platforms (before Transfer to prevent misclassification)
+    (re.compile(r"robinhood|schwab|fidelity|vanguard|e[\s*]?trade|td\s*ameritrade|merrill\s*lynch|merrill\s*edge|wealthfront|betterment|acorns\b|stash\s*invest|sofi\s*invest|m1\s*finance|public\.com|webull|coinbase|binance|kraken\b|gemini\s*crypto|investment|brokerage|stock\s*purchase|dividend|mutual\s*fund|sip\s*invest|zerodha|groww\b|kuvera|paytm\s*money|upstox", re.I), "Investments"),
+
     # Transfer — CC payments, ACH, P2P (must be last before Misc to catch broad patterns)
     (re.compile(r"payment\s*thank\s*you|autopay|online\s*payment\s*thank|thank\s*you\s*payment|balance\s*payment|web\s*payment|mobile\s*payment|ach\s*(?:debit|credit|transfer)|wire\s*transfer|\bzelle\b|\bvenmo\b|\bpaypal\b|cc\s*payment|card\s*payment|citi\s*payment|chase\s*payment|capital\s*one\s*payment|wells\s*fargo\s*payment|bank\s*of\s*america\s*payment|bofa\s*payment|amex\s*payment|bill\s*pay", re.I), "Transfer"),
 ]
