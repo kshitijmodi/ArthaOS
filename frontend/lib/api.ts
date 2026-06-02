@@ -69,7 +69,7 @@ export const snoozeAlert = (id: number, days = 3) =>
 
 export const getTransactions = (params: {
   page?: number; page_size?: number; category?: string; sort_by?: string; sort_dir?: string;
-  starred?: boolean; charges_only?: boolean;
+  starred?: boolean; charges_only?: boolean; query?: string;
 }) => {
   const q = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));

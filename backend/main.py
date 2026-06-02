@@ -178,6 +178,7 @@ def get_transactions(
     sort_dir: str = "desc",
     starred: Optional[bool] = None,
     charges_only: Optional[bool] = None,
+    query: Optional[str] = None,
 ):
     allowed_sort = {"date", "amount", "category", "description"}
     if sort_by not in allowed_sort:
@@ -196,6 +197,9 @@ def get_transactions(
         filters.append("starred = 1")
     if charges_only is True:
         filters.append("category = 'Fees & Interest'")
+    if query:
+        filters.append("description LIKE ?")
+        params.append(f"%{query}%")
 
     where = " AND ".join(filters)
     offset = (page - 1) * page_size

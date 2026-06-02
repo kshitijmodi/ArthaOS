@@ -44,13 +44,14 @@ export default function TransactionTable() {
         sort_dir: sortDir,
         starred: starredOnly || undefined,
         charges_only: chargesOnly || undefined,
+        query: search || undefined,
       });
       setTransactions(res.transactions);
       setTotal(res.total);
     } finally {
       setLoading(false);
     }
-  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly]);
+  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly, search]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -64,10 +65,6 @@ export default function TransactionTable() {
     const res = await starTransaction(id);
     setTransactions(prev => prev.map(t => t.id === id ? { ...t, starred: res.starred ? 1 : 0 } : t));
   };
-
-  const filtered = search
-    ? transactions.filter(t => t.description.toLowerCase().includes(search.toLowerCase()))
-    : transactions;
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
@@ -94,7 +91,7 @@ export default function TransactionTable() {
           <Search size={13} className="text-tx-3 shrink-0" />
           <input
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setPage(1); }}
             placeholder="Search transactions…"
             className="bg-transparent text-sm text-tx placeholder:text-tx-3 outline-none w-full"
           />
@@ -145,7 +142,7 @@ export default function TransactionTable() {
                     ))}
                   </tr>
                 ))
-              : filtered.map(tx => {
+              : transactions.map(tx => {
                   const method = detectPaymentMethod(tx.description);
                   const institution = tx.institution || tx.account_name || "";
                   return (
