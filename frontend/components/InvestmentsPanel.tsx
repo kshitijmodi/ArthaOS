@@ -151,12 +151,23 @@ export default function InvestmentsPanel() {
     finally { setReingesting(false); }
   };
 
-  const filteredHoldings = selectedBroker ? holdings.filter(h => brokerKey(h.broker) === brokerKey(selectedBroker)) : holdings;
+  // Two broker names can map to the same canonical label (e.g. "Fidelity" and
+  // "Fidelity Investments" both → "Fidelity 401K"). Group them together so only
+  // one tab appears and filtering shows holdings from both variants.
+  function sameGroup(b1: string, b2: string): boolean {
+    const label = (b: string) => BROKER_LABELS[brokerKey(b)] ?? b;
+    return label(b1) === label(b2);
+  }
+
+  const filteredHoldings = selectedBroker ? holdings.filter(h => sameGroup(h.broker, selectedBroker)) : holdings;
   const filteredRecentTxns = selectedBroker
-    ? (summary?.recent_transactions ?? []).filter(tx => brokerKey(tx.broker) === brokerKey(selectedBroker))
+    ? (summary?.recent_transactions ?? []).filter(tx => sameGroup(tx.broker, selectedBroker))
     : (summary?.recent_transactions ?? []);
 
-  const availableBrokers = Array.from(new Set((summary?.accounts ?? []).map(a => a.broker)));
+  // Deduplicate tabs by canonical label — keeps first broker name per group
+  const availableBrokers = Array.from(
+    new Map((summary?.accounts ?? []).map(a => [BROKER_LABELS[brokerKey(a.broker)] ?? a.broker, a.broker])).values()
+  );
 
   // Broker totals for top KPI bar — broker names are lowercased in DB (PDF parser)
   // but Plaid may store as "Robinhood" (capital). Normalise to lowercase for matching.
