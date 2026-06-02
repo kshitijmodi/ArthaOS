@@ -7,6 +7,7 @@ import { Menu, Zap } from "lucide-react";
 import KPICards from "@/components/KPICards";
 import CategoryDonut from "@/components/CategoryDonut";
 import DrillDownModal from "@/components/DrillDownModal";
+import KPIDrillPanel, { KPIDrillType } from "@/components/KPIDrillPanel";
 import TransactionTable from "@/components/TransactionTable";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import AlertsPanel from "@/components/AlertsPanel";
@@ -80,6 +81,7 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [drillDown, setDrillDown] = useState<{ label: string; txns: Transaction[] } | null>(null);
+  const [kpiPanel, setKpiPanel] = useState<KPIDrillType | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
@@ -151,6 +153,7 @@ export default function Page() {
             loading={loading}
             maxAmount={maxAmount}
             onDrillDown={openDrill}
+            onKPIDrillDown={setKpiPanel}
             onNavigate={navigate}
             asOf={asOf}
           />
@@ -213,6 +216,9 @@ export default function Page() {
           onClose={() => setDrillDown(null)}
         />
       )}
+      {kpiPanel && (
+        <KPIDrillPanel type={kpiPanel} onClose={() => setKpiPanel(null)} />
+      )}
 
       {/* Global floating chat — always visible */}
       <FloatingChat />
@@ -228,13 +234,14 @@ interface DashboardProps {
   loading: boolean;
   maxAmount: number;
   onDrillDown: (label: string, txns: Transaction[]) => void;
+  onKPIDrillDown: (type: KPIDrillType) => void;
   onNavigate: (v: View) => void;
   asOf?: string;
 }
 
 function DashboardView({
   filters, onFiltersChange, allTxns, filteredTxns,
-  loading, maxAmount, onDrillDown, onNavigate, asOf,
+  loading, maxAmount, onDrillDown, onKPIDrillDown, onNavigate, asOf,
 }: DashboardProps) {
   const recentTxns = filteredTxns.slice(0, 8);
 
@@ -258,7 +265,7 @@ function DashboardView({
 
       <FilterBar filters={filters} onChange={onFiltersChange} maxAmount={maxAmount} />
 
-      <KPICards transactions={filteredTxns} allTxns={allTxns} onDrillDown={onDrillDown} asOf={asOf} />
+      <KPICards transactions={filteredTxns} allTxns={allTxns} onDrillDown={onDrillDown} onKPIDrillDown={onKPIDrillDown} asOf={asOf} />
 
       {/* Charts — inline analytics */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">

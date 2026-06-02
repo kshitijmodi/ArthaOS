@@ -467,6 +467,62 @@ def accounts_summary(as_of: Optional[str] = None):
     }
 
 
+@app.get("/dashboard/accounts-detail")
+def accounts_detail():
+    """Per-account breakdown for KPI card drill-downs (bank, CC, loan, net worth)."""
+    with db() as conn:
+        teller_bank = conn.execute(
+            """SELECT ta.institution, ta.name, ta.type, ta.subtype,
+                      COALESCE(ta.balance_available, ta.balance_ledger, 0) as balance
+               FROM teller_accounts ta
+               JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
+               WHERE te.status = 'active'
+                 AND lower(ta.type) IN ('depository','checking','savings')"""
+        ).fetchall()
+        plaid_bank = conn.execute(
+            """SELECT institution, name, type, subtype,
+                      COALESCE(balance_available, balance_current, 0) as balance
+               FROM plaid_accounts WHERE lower(type) = 'depository'"""
+        ).fetchall()
+        teller_cc = conn.execute(
+            """SELECT ta.institution, ta.name, ta.type, ta.subtype,
+                      ABS(COALESCE(ta.balance_ledger, 0)) as balance
+               FROM teller_accounts ta
+               JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
+               WHERE te.status = 'active'
+                 AND lower(ta.type) IN ('credit','credit_card')"""
+        ).fetchall()
+        plaid_cc = conn.execute(
+            """SELECT institution, name, type, subtype,
+                      MAX(0, COALESCE(balance_current, 0)) as balance
+               FROM plaid_accounts WHERE lower(type) = 'credit'"""
+        ).fetchall()
+        teller_loan = conn.execute(
+            """SELECT ta.institution, ta.name, ta.type, ta.subtype,
+                      ABS(COALESCE(ta.balance_ledger, ta.balance_available, 0)) as balance
+               FROM teller_accounts ta
+               JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
+               WHERE te.status = 'active'
+                 AND lower(ta.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')"""
+        ).fetchall()
+        plaid_loan = conn.execute(
+            """SELECT institution, name, type, subtype,
+                      ABS(COALESCE(balance_current, 0)) as balance
+               FROM plaid_accounts WHERE lower(type) = 'loan'"""
+        ).fetchall()
+        recent_txns = conn.execute(
+            """SELECT date, description, amount, transaction_type, category, institution
+               FROM transactions ORDER BY date DESC LIMIT 10"""
+        ).fetchall()
+
+    return {
+        "bank_accounts":  [dict(r) for r in teller_bank] + [dict(r) for r in plaid_bank],
+        "cc_accounts":    [dict(r) for r in teller_cc]   + [dict(r) for r in plaid_cc],
+        "loan_accounts":  [dict(r) for r in teller_loan] + [dict(r) for r in plaid_loan],
+        "recent_transactions": [dict(r) for r in recent_txns],
+    }
+
+
 @app.get("/ingestion/status")
 def ingestion_status():
     with db() as conn:

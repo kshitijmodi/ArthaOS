@@ -192,6 +192,20 @@ export interface AccountsSummary {
 export const getAccountsSummary = (as_of?: string) =>
   apiFetch<AccountsSummary>(`/dashboard/accounts-summary${as_of ? `?as_of=${as_of}` : ""}`);
 
+export interface AccountDetail {
+  institution: string; name: string; type: string; subtype: string; balance: number;
+}
+export interface AccountsDetail {
+  bank_accounts: AccountDetail[];
+  cc_accounts: AccountDetail[];
+  loan_accounts: AccountDetail[];
+  recent_transactions: {
+    date: string; description: string; amount: number;
+    transaction_type: string; category: string; institution: string | null;
+  }[];
+}
+export const getAccountsDetail = () => apiFetch<AccountsDetail>("/dashboard/accounts-detail");
+
 // Plaid
 export interface PlaidAccount {
   account_id: string;

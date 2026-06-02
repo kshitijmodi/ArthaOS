@@ -5,13 +5,15 @@ import {
   Building2, CreditCard, BarChart3, PiggyBank, Scale, Car,
 } from "lucide-react";
 import { Transaction, getAccountsSummary, AccountsSummary } from "@/lib/api";
+import { KPIDrillType } from "@/components/KPIDrillPanel";
 import { formatCurrency, cn } from "@/lib/utils";
 
 interface Props {
   transactions: Transaction[];
   allTxns: Transaction[];
   onDrillDown: (label: string, txns: Transaction[]) => void;
-  /** End-of-period ISO date for period-aware Bank/CC balance lookup */
+  onKPIDrillDown: (type: KPIDrillType) => void;
+  /** End-of-period ISO date — only used for income/expenses context, NOT for balances */
   asOf?: string;
 }
 
@@ -82,17 +84,18 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: Props) {
+export default function KPICards({ transactions, allTxns, onDrillDown, onKPIDrillDown, asOf }: Props) {
   const [accounts, setAccounts] = useState<AccountsSummary | null>(null);
   const [acctLoading, setAcctLoading] = useState(true);
 
   useEffect(() => {
+    // Always fetch current balances — period filter only applies to income/expenses
     setAcctLoading(true);
-    getAccountsSummary(asOf)
+    getAccountsSummary()
       .then(setAccounts)
       .catch(() => setAccounts(null))
       .finally(() => setAcctLoading(false));
-  }, [asOf]);
+  }, []);
 
   const m = useMemo(() => {
     const incomes = transactions.filter(t => t.category === "Income");
@@ -146,20 +149,22 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
         <Card
           label="Bank Balance"
           value={accounts ? formatCurrency(accounts.bank_balance) : "—"}
-          sub={isPeriod ? "as of period end" : "current"}
+          sub="current"
           icon={<Building2 size={14} className="text-accent" />}
           iconBg="bg-accent/10" border="border-accent/20 hover:border-accent/40" accent="text-accent"
           loading={acctLoading}
+          onClick={() => onKPIDrillDown("bank")}
         />
         <Card
           label="CC Balance"
           value={accounts ? formatCurrency(accounts.cc_balance) : "—"}
-          sub={isPeriod ? "as of period end" : "total owed"}
+          sub="total owed"
           icon={<CreditCard size={14} className={ccHigh ? "text-expense" : "text-warn"} />}
           iconBg={ccHigh ? "bg-expense/10" : "bg-warn/10"}
           border={ccHigh ? "border-expense/20 hover:border-expense/40" : "border-warn/20 hover:border-warn/40"}
           accent={ccHigh ? "text-expense" : "text-warn"}
           loading={acctLoading}
+          onClick={() => onKPIDrillDown("cc")}
         />
       </div>
 
@@ -189,6 +194,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
           icon={<PiggyBank size={14} className="text-income" />}
           iconBg="bg-income/10" border="border-income/20 hover:border-income/40" accent="text-income"
           loading={acctLoading}
+          onClick={() => onKPIDrillDown("401k")}
         />
         <Card
           label="Stocks" value={accounts ? formatCurrency(accounts.portfolio_stocks) : "—"}
@@ -196,6 +202,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
           icon={<BarChart3 size={14} className="text-savings" />}
           iconBg="bg-savings/10" border="border-savings/20 hover:border-savings/40" accent="text-savings"
           loading={acctLoading}
+          onClick={() => onKPIDrillDown("stocks")}
         />
         <Card
           label="Net Worth" value={accounts ? formatCurrency(Math.abs(nw)) : "—"}
@@ -205,6 +212,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, asOf }: P
           border={nw >= 0 ? "border-income/20 hover:border-income/40" : "border-expense/20 hover:border-expense/40"}
           accent={nw >= 0 ? "text-income" : "text-expense"}
           loading={acctLoading}
+          onClick={() => onKPIDrillDown("networth")}
         />
       </div>
     </div>
