@@ -97,7 +97,7 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
 
   // Compute running balance for bank transactions (approximate)
   const bankTxnsWithBalance = (() => {
-    if (!detail) return [];
+    if (!detail || !accounts) return [];
     const txns = [...detail.recent_transactions].sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
