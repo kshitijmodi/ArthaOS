@@ -367,6 +367,19 @@ def accounts_summary(as_of: Optional[str] = None):
             bank_balance = round(period_balance("lower(a.type) IN ('depository','checking','savings')"), 2)
             cc_balance   = round(period_balance("lower(a.type) IN ('credit','credit_card')", prefer_ledger=True), 2)
             loan_balance = round(period_balance("lower(a.type) IN ('loan','auto_loan','mortgage','student_loan','personal_loan')", prefer_ledger=True), 2)
+
+            # Plaid has no balance history table — add current Plaid balances to period values
+            # (best approximation; Plaid CCs like Bilt were excluded entirely without this)
+            p_bank_as_of = conn.execute(
+                """SELECT COALESCE(SUM(COALESCE(balance_available, balance_current, 0)), 0) as total
+                   FROM plaid_accounts WHERE lower(type) = 'depository'"""
+            ).fetchone()
+            p_cc_as_of = conn.execute(
+                """SELECT COALESCE(SUM(MAX(0, COALESCE(balance_current, 0))), 0) as total
+                   FROM plaid_accounts WHERE lower(type) = 'credit'"""
+            ).fetchone()
+            bank_balance = round(bank_balance + (p_bank_as_of["total"] or 0), 2)
+            cc_balance   = round(cc_balance   + (p_cc_as_of["total"]  or 0), 2)
         else:
             # Teller depository
             t_bank = conn.execute(
