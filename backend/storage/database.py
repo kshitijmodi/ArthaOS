@@ -399,26 +399,22 @@ def _run_migrations():
         """)
 
         # scheduled_tasks — added after initial deployment
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_type       TEXT NOT NULL,
-                description     TEXT NOT NULL,
-                params          TEXT NOT NULL DEFAULT '{}',
-                fire_at         TEXT NOT NULL,
-                repeat_interval TEXT,
-                status          TEXT NOT NULL DEFAULT 'pending'
-                                CHECK(status IN ('pending','running','completed','failed','cancelled')),
-                initiated_by    TEXT NOT NULL DEFAULT 'user'
-                                CHECK(initiated_by IN ('user','agent')),
-                snapshot        TEXT,
-                result          TEXT,
-                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-                completed_at    TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_tasks_status  ON scheduled_tasks(status);
-            CREATE INDEX IF NOT EXISTS idx_tasks_fire_at ON scheduled_tasks(fire_at);
-        """)
+        conn.execute("""CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_type       TEXT NOT NULL,
+            description     TEXT NOT NULL,
+            params          TEXT NOT NULL DEFAULT '{}',
+            fire_at         TEXT NOT NULL,
+            repeat_interval TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            initiated_by    TEXT NOT NULL DEFAULT 'user',
+            snapshot        TEXT,
+            result          TEXT,
+            created_at      TEXT,
+            completed_at    TEXT
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status  ON scheduled_tasks(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_fire_at ON scheduled_tasks(fire_at)")
 
 
 def _seed_categories():
