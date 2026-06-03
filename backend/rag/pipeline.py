@@ -460,8 +460,8 @@ def _ctx_investments(conn) -> list[str]:
             lines.append(f"  [{r['broker']} — {r['account']}]")
         mv = r["total_value"] or 0.0
         broker_total += mv
-        day_gl = f" | day: ${r['gain_loss_day']:,.2f}" if r.get("gain_loss_day") else ""
-        price_str = f" @ ${r['price']:,.2f}" if r.get("price") else ""
+        day_gl = f" | day: ${r['gain_loss_day']:,.2f}" if r["gain_loss_day"] else ""
+        price_str = f" @ ${r['price']:,.2f}" if r["price"] else ""
         lines.append(
             f"    {r['ticker'] or r['name']}: {r['quantity']}{price_str}"
             f" = ${mv:,.2f}{day_gl}"
