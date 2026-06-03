@@ -174,39 +174,34 @@ def _execute_track_total(params: dict, snapshot: dict) -> dict:
 
 
 def _execute_monitor_investments(params: dict, snapshot: dict) -> dict:
-    """Report on current investment performance vs snapshot."""
+    """Report investment totals by broker with grand total."""
     from backend.storage.database import db
 
     with db() as conn:
-        holdings = conn.execute(
-            """SELECT ticker, name, total_value, gain_loss, gain_loss_pct
+        brokers = conn.execute(
+            """SELECT broker, account, SUM(total_value) as total
                FROM investment_holdings h
-               WHERE as_of_date = (SELECT MAX(as_of_date) FROM investment_holdings)
-               ORDER BY gain_loss ASC"""
+               WHERE h.as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               GROUP BY broker, account
+               ORDER BY total DESC"""
         ).fetchall()
 
-    if not holdings:
+    if not brokers:
         return {"summary": "No investment holdings data available yet."}
 
-    losers = [r for r in holdings if (r["gain_loss"] or 0) < 0]
-    gainers = [r for r in holdings if (r["gain_loss"] or 0) > 0]
+    lines = ["💼 *Investment Portfolio*\n"]
+    grand_total = 0.0
+    for r in brokers:
+        val = r["total"] or 0.0
+        grand_total += val
+        lines.append(f"  {r['broker']} — {r['account']}: ${val:,.2f}")
 
-    lines = ["Investment snapshot:"]
-    if losers:
-        lines.append("\n📉 Biggest losers:")
-        for r in losers[:3]:
-            pct = f"{r['gain_loss_pct']:.1f}%" if r["gain_loss_pct"] else "N/A"
-            lines.append(f"  {r['ticker'] or r['name']}: ${r['gain_loss']:,.2f} ({pct})")
-    if gainers:
-        lines.append("\n📈 Biggest gainers:")
-        for r in reversed(gainers[-3:]):
-            pct = f"{r['gain_loss_pct']:.1f}%" if r["gain_loss_pct"] else "N/A"
-            lines.append(f"  {r['ticker'] or r['name']}: +${r['gain_loss']:,.2f} ({pct})")
+    lines.append(f"\n*Total: ${grand_total:,.2f}*")
 
-    total_value = sum(r["total_value"] for r in holdings)
-    lines.append(f"\nTotal portfolio value: ${total_value:,.2f}")
-
-    return {"summary": "\n".join(lines), "holdings_count": len(holdings)}
+    return {"summary": "\n".join(lines), "total": grand_total}
 
 
 def _execute_threshold_alert(params: dict, snapshot: dict) -> dict:
