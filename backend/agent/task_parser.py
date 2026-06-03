@@ -16,9 +16,33 @@ Examples:
 """
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_local_time(query: str) -> str | None:
+    """
+    Extract a clock time from the query using regex and return HH:MM (24h).
+    E.g. "at 4:18pm" → "16:18", "at 9am" → "09:00".
+    Returns None if no time found.
+    """
+    m = re.search(
+        r"\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+        query,
+        re.IGNORECASE,
+    )
+    if not m:
+        return None
+    hour = int(m.group(1))
+    minute = int(m.group(2)) if m.group(2) else 0
+    meridiem = m.group(3).lower()
+    if meridiem == "pm" and hour != 12:
+        hour += 12
+    elif meridiem == "am" and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{minute:02d}"
 
 # ET offset in hours from UTC. EDT (summer) = -4, EST (winter) = -5.
 # DST in US: second Sunday March → first Sunday November.
@@ -105,6 +129,14 @@ def parse_task(query: str) -> dict | None:
                 raw = raw[4:]
         raw = raw.strip()
         task = json.loads(raw)
+        # Override LLM time output with Python-parsed local time (reliable)
+        local_time = _extract_local_time(query)
+        if local_time:
+            if "params" not in task:
+                task["params"] = {}
+            task["params"]["fire_at_local"] = local_time
+            task["params"].pop("fire_at_time", None)  # remove old field if present
+            logger.debug("[TaskParser] Regex extracted local time: %s", local_time)
         return task
     except Exception as exc:
         logger.warning("[TaskParser] Failed to parse task from %r: %s", query, exc)
