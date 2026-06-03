@@ -137,6 +137,23 @@ def parse_task(query: str) -> dict | None:
             task["params"]["fire_at_local"] = local_time
             task["params"].pop("fire_at_time", None)  # remove old field if present
             logger.debug("[TaskParser] Regex extracted local time: %s", local_time)
+
+        # Fix task type misclassifications
+        q = query.lower()
+        investment_keywords = r"\b(invest|investments?|portfolio|holdings?|stocks?|401k|fidelity|robinhood|schwab|brokerage)\b"
+        balance_keywords = r"\b(balance|balances?|account\s+balance|how\s+much.*(?:in|have))\b"
+        savings_keywords = r"\b(sav(e|ings?)|predict|forecast|month\s*end)\b"
+        expense_keywords = r"\b(expense\s+report|spending\s+report|breakdown)\b"
+        if re.search(investment_keywords, q) and task.get("task_type") in ("track_total", "track_category", "custom"):
+            task["task_type"] = "monitor_investments"
+            task["description"] = "Investment portfolio snapshot"
+        elif re.search(balance_keywords, q) and task.get("task_type") in ("track_total", "track_category", "custom"):
+            task["task_type"] = "balance_check"
+        elif re.search(savings_keywords, q) and task.get("task_type") in ("track_total", "custom"):
+            task["task_type"] = "predict_savings"
+        elif re.search(expense_keywords, q) and task.get("task_type") in ("track_total", "custom"):
+            task["task_type"] = "expense_report"
+
         return task
     except Exception as exc:
         logger.warning("[TaskParser] Failed to parse task from %r: %s", query, exc)
