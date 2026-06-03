@@ -275,9 +275,16 @@ def sync_all() -> dict:
         return {"items": 0, "new_transactions": 0}
 
     total_txns = 0
+    errors = []
     for row in items:
-        result = sync_item(row["item_id"], row["access_token"], row["institution"])
-        total_txns += result.get("new_transactions", 0)
+        try:
+            result = sync_item(row["item_id"], row["access_token"], row["institution"])
+            total_txns += result.get("new_transactions", 0)
+        except Exception as exc:
+            logger.error("[PlaidSync] Item %s (%s) failed: %s", row["item_id"], row["institution"], exc)
+            errors.append(row["institution"])
 
+    if errors:
+        logger.warning("[PlaidSync] %d item(s) failed: %s", len(errors), ", ".join(errors))
     logger.info("[PlaidSync] Sync complete — %d items, %d new txns", len(items), total_txns)
     return {"items": len(items), "new_transactions": total_txns}

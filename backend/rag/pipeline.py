@@ -437,9 +437,14 @@ def _ctx_income(conn) -> list[str]:
 
 def _ctx_investments(conn) -> list[str]:
     rows = conn.execute(
-        """SELECT broker, ticker, quantity, current_price, market_value,
-                  gain_loss, gain_loss_day
-           FROM plaid_holdings ORDER BY broker, market_value DESC"""
+        """SELECT broker, ticker, name, quantity, price, total_value,
+                  gain_loss, gain_loss_day, account
+           FROM investment_holdings h
+           WHERE h.as_of_date = (
+               SELECT MAX(as_of_date) FROM investment_holdings h2
+               WHERE h2.broker = h.broker AND h2.account = h.account
+           )
+           ORDER BY broker, total_value DESC"""
     ).fetchall()
     if not rows:
         return ["=== Investments — No holdings data ==="]
@@ -452,12 +457,13 @@ def _ctx_investments(conn) -> list[str]:
                 lines.append(f"  {current_broker} subtotal: ${broker_total:,.2f}")
             current_broker = r["broker"]
             broker_total = 0.0
-            lines.append(f"  [{r['broker']}]")
-        mv = r["market_value"] or 0.0
+            lines.append(f"  [{r['broker']} — {r['account']}]")
+        mv = r["total_value"] or 0.0
         broker_total += mv
         day_gl = f" | day: ${r['gain_loss_day']:,.2f}" if r.get("gain_loss_day") else ""
+        price_str = f" @ ${r['price']:,.2f}" if r.get("price") else ""
         lines.append(
-            f"    {r['ticker']}: {r['quantity']} @ ${r['current_price']:,.2f}"
+            f"    {r['ticker'] or r['name']}: {r['quantity']}{price_str}"
             f" = ${mv:,.2f}{day_gl}"
         )
     if current_broker:
