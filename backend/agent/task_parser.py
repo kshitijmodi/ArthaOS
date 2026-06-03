@@ -20,41 +20,51 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-_TASK_PARSE_PROMPT = """You are a financial task parser. Convert the user's natural language request into a structured JSON task.
+_TASK_PARSE_PROMPT = """You are a financial task parser. The current date/time is: {current_datetime} (UTC).
+
+Convert the user's natural language request into a structured JSON task.
 
 Available task types:
 - track_category: Track spending in a specific category over N days
 - track_total: Track total spending (all categories) over N days
-- monitor_investments: Check investment portfolio performance over N hours/days
+- monitor_investments: Check investment portfolio performance
 - threshold_alert: Alert if spend in a category exceeds a dollar amount
-- daily_summary: Send a daily spending summary at a specific time
+- daily_summary: Send a daily spending summary
 - balance_check: Check account balances at a scheduled time
-- custom: Any other financial monitoring task
+- predict_savings: Predict how much the user will save by month end
+- investment_advice: Analyze portfolio + spending and give investment recommendations
+- expense_report: Generate a comprehensive spending report for a period
+- custom: Any other financial monitoring or analysis task
 
 Return ONLY valid JSON with these fields:
-{
+{{
   "task_type": "<type>",
   "description": "<human readable one-line description>",
-  "params": {
+  "params": {{
     "category": "<category name if applicable, else null>",
     "threshold": <dollar amount if applicable, else null>,
     "metric": "<what to measure: spend/loss/gain/balance>",
-    "report_time": "<HH:MM if specific time, else null>",
-    "summary_type": "<what kind of summary: spending/investments/alerts/all>"
-  },
-  "duration_hours": <number of hours until task fires, null if not applicable>,
-  "duration_days": <number of days until task fires, null if not applicable>,
-  "repeat_interval": "<daily/hourly/30min or null for one-shot>"
-}
+    "fire_at_time": "<HH:MM 24-hour if user says 'at X pm/am', else null>",
+    "report_period": "<this month/last month/this week if mentioned, else null>",
+    "summary_type": "<spending/investments/alerts/all>"
+  }},
+  "duration_hours": <hours until task fires if relative like 'in 3 hours', else null>,
+  "duration_days": <days until task fires if relative like 'in 2 days'/'for next week', else null>,
+  "repeat_interval": "<daily/weekly/hourly or null for one-shot>"
+}}
 
-Rules:
-- "for 2 days then summarize" → duration_days: 2, repeat_interval: null
-- "every morning" or "daily" → repeat_interval: "daily"
-- "for 1 hour" → duration_hours: 1
-- "today" → duration_days: 1
-- "this week" → duration_days: 7
-- If category is mentioned, match to: Groceries, Dining, Travel, Shopping, Utilities, Subscriptions, Insurance, EMIs, Rent, Healthcare, Education, Investments, Income, Miscellaneous
-- If no duration given, default to duration_days: 1
+Time rules (current time is {current_datetime} UTC):
+- "at 9pm" or "at 21:00" → fire_at_time: "21:00", duration_hours: null
+- "at 9am tomorrow" → fire_at_time: "09:00", duration_days: 1
+- "in 2 hours" → duration_hours: 2
+- "tomorrow morning" → fire_at_time: "09:00", duration_days: 1
+- "every day at 9am" → fire_at_time: "09:00", repeat_interval: "daily"
+- "for the next 7 days" → duration_days: 7
+- "this week" or "next week" → duration_days: 7
+- "by month end" or "end of month" → duration_days: days remaining in current month
+- If no time given for one-shot tasks, default: duration_hours: 1
+
+Category mapping: Groceries, Dining, Travel, Shopping, Utilities, Subscriptions, Insurance, EMIs, Rent, Healthcare, Education, Investments, Income, Miscellaneous
 
 User request: {query}"""
 
@@ -66,9 +76,11 @@ def parse_task(query: str) -> dict | None:
     """
     try:
         from backend.rag.llm import complete
+        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        prompt = _TASK_PARSE_PROMPT.replace("{current_datetime}", now_str).replace("{query}", query)
         raw = complete(
-            _TASK_PARSE_PROMPT.replace("{query}", query),
-            max_tokens=300,
+            prompt,
+            max_tokens=400,
             system="You are a JSON-only response bot. Return only valid JSON, no explanation.",
         )
         # Strip markdown code fences if present
@@ -88,19 +100,32 @@ def parse_task(query: str) -> dict | None:
 def build_scheduled_task(parsed: dict, initiated_by: str = "user") -> dict:
     """
     Convert parsed task dict into a scheduled_tasks DB row dict.
-    Computes fire_at based on duration.
+    Handles absolute times ("at 9pm" → fire_at_time) and relative durations.
     """
     now = datetime.utcnow()
+    params = parsed.get("params", {})
+    fire_at_time = params.get("fire_at_time")  # "HH:MM" in UTC (user said "at 9pm")
 
-    duration_hours = parsed.get("duration_hours") or 0
-    duration_days = parsed.get("duration_days") or 0
-
-    if duration_hours:
-        fire_at = now + timedelta(hours=duration_hours)
-    elif duration_days:
-        fire_at = now + timedelta(days=duration_days)
+    if fire_at_time:
+        try:
+            h, m = map(int, fire_at_time.split(":"))
+            fire_at = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            # If the time has already passed today, schedule for tomorrow
+            extra_days = parsed.get("duration_days") or 0
+            if fire_at <= now or extra_days > 0:
+                fire_at += timedelta(days=max(1, extra_days))
+        except Exception:
+            fire_at = now + timedelta(hours=1)
     else:
-        fire_at = now + timedelta(days=1)  # default: tomorrow
+        duration_hours = parsed.get("duration_hours") or 0
+        duration_days = parsed.get("duration_days") or 0
+
+        if duration_hours:
+            fire_at = now + timedelta(hours=duration_hours)
+        elif duration_days:
+            fire_at = now + timedelta(days=duration_days)
+        else:
+            fire_at = now + timedelta(hours=1)  # default: in 1 hour
 
     # Capture snapshot of current state for comparison at fire time
     snapshot = _capture_snapshot(parsed)

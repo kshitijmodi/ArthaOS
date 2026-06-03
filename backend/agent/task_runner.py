@@ -96,6 +96,12 @@ def _run_task_logic(task: dict) -> dict:
         return _execute_daily_summary(params, snapshot)
     elif task_type == "balance_check":
         return _execute_balance_check(params, snapshot)
+    elif task_type == "predict_savings":
+        return _execute_predict_savings(params, snapshot)
+    elif task_type == "investment_advice":
+        return _execute_investment_advice(params, snapshot)
+    elif task_type == "expense_report":
+        return _execute_expense_report(params, snapshot)
     else:
         return _execute_custom(task, params, snapshot)
 
@@ -273,30 +279,203 @@ def _execute_daily_summary(params: dict, snapshot: dict) -> dict:
 
 
 def _execute_balance_check(params: dict, snapshot: dict) -> dict:
-    """Check current account balances."""
+    """Check current account balances — Teller (active) + Plaid."""
     from backend.storage.database import db
 
     with db() as conn:
-        accounts = conn.execute(
-            """SELECT ta.institution, ta.name, ta.type, ta.balance_ledger, ta.last_synced_at
+        teller = conn.execute(
+            """SELECT ta.institution, ta.name, ta.type,
+                      COALESCE(ta.balance_available, ta.balance_ledger, 0) as balance
                FROM teller_accounts ta
                JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
                WHERE te.status = 'active'
                ORDER BY ta.institution, ta.type"""
         ).fetchall()
+        plaid = conn.execute(
+            """SELECT institution, name, type,
+                      COALESCE(balance_available, balance_current, 0) as balance
+               FROM plaid_accounts
+               WHERE lower(type) IN ('depository','checking','savings')
+               ORDER BY institution, name"""
+        ).fetchall()
 
-    if not accounts:
-        return {"summary": "No connected accounts found."}
+    all_accounts = [dict(r) for r in teller] + [dict(r) for r in plaid]
+    if not all_accounts:
+        return {"summary": "No bank accounts found. Check your account connections."}
 
-    lines = ["💰 Account Balances:"]
-    total = 0.0
-    for a in accounts:
-        bal = a["balance_ledger"] or 0
-        total += bal
-        lines.append(f"  {a['institution']} {a['name']}: ${bal:,.2f}")
-    lines.append(f"\nTotal: ${total:,.2f}")
+    lines = ["💰 *Account Balances:*"]
+    bank_total = 0.0
+    for a in all_accounts:
+        if a["type"] in ("depository", "checking", "savings"):
+            bank_total += a["balance"]
+            lines.append(f"  {a['institution']} — {a['name']}: ${a['balance']:,.2f}")
 
-    return {"summary": "\n".join(lines), "total": total}
+    lines.append(f"\n*Total bank balance: ${bank_total:,.2f}*")
+    return {"summary": "\n".join(lines), "total": bank_total}
+
+
+def _execute_predict_savings(params: dict, snapshot: dict) -> dict:
+    """Predict month-end savings based on current spend pace."""
+    from backend.storage.database import db
+    from backend.rag.llm import complete
+    from datetime import date
+    import calendar
+
+    today = date.today()
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    days_elapsed = today.day
+    days_remaining = days_in_month - days_elapsed
+
+    with db() as conn:
+        spend_rows = conn.execute(
+            """SELECT category, ROUND(SUM(amount),2) as total
+               FROM transactions WHERE transaction_type='debit'
+                 AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
+               GROUP BY category ORDER BY total DESC"""
+        ).fetchall()
+        income_this_month = conn.execute(
+            """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+               WHERE transaction_type='credit' AND category='Income'
+                 AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"""
+        ).fetchone()["total"]
+        avg_income_3m = conn.execute(
+            """SELECT COALESCE(AVG(m_total), 0) as avg
+               FROM (SELECT strftime('%Y-%m', date) as m, SUM(amount) as m_total
+                     FROM transactions WHERE transaction_type='credit' AND category='Income'
+                       AND date >= date('now', '-90 days')
+                     GROUP BY m)"""
+        ).fetchone()["avg"]
+        bank_balance = conn.execute(
+            """SELECT COALESCE(SUM(COALESCE(balance_available, balance_current, 0)), 0) as total
+               FROM plaid_accounts WHERE lower(type) IN ('depository','checking','savings')"""
+        ).fetchone()["total"]
+        # Add active Teller bank balance
+        teller_bank = conn.execute(
+            """SELECT COALESCE(SUM(COALESCE(ta.balance_available, ta.balance_ledger, 0)), 0) as total
+               FROM teller_accounts ta
+               JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
+               WHERE te.status = 'active'
+                 AND lower(ta.type) IN ('depository','checking','savings')"""
+        ).fetchone()["total"]
+        bank_balance += teller_bank
+
+    total_spend = sum(r["total"] for r in spend_rows)
+    daily_burn = total_spend / max(days_elapsed, 1)
+    projected_spend = daily_burn * days_in_month
+    expected_income = income_this_month if income_this_month > 0 else avg_income_3m
+
+    cat_lines = "\n".join(f"  {r['category']}: ${r['total']:,.2f}" for r in spend_rows[:8])
+    prompt = f"""Predict month-end savings for a US-based user. Today is day {days_elapsed} of {days_in_month} ({days_remaining} days remaining this month).
+
+Spending so far: ${total_spend:,.2f} (${daily_burn:,.2f}/day average)
+Projected total monthly spend: ${projected_spend:,.2f}
+Income this month: ${income_this_month:,.2f} (3-month avg: ${avg_income_3m:,.2f})
+Current bank balance: ${bank_balance:,.2f}
+
+Top spending categories:
+{cat_lines}
+
+Provide a concise savings forecast and 2-3 practical tips to improve it. Format as a WhatsApp message with dollar amounts."""
+
+    response = complete(prompt, max_tokens=400)
+    return {"summary": response}
+
+
+def _execute_investment_advice(params: dict, snapshot: dict) -> dict:
+    """Analyze portfolio + spending patterns and provide investment recommendations."""
+    from backend.storage.database import db
+    from backend.rag.llm import complete
+
+    with db() as conn:
+        holdings = conn.execute(
+            """SELECT broker, ticker, name, total_value, gain_loss
+               FROM investment_holdings h
+               WHERE h.as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               ORDER BY broker, total_value DESC"""
+        ).fetchall()
+        spend = conn.execute(
+            """SELECT category, ROUND(SUM(amount),2) as total
+               FROM transactions WHERE transaction_type='debit'
+                 AND date >= date('now', '-60 days')
+               GROUP BY category ORDER BY total DESC LIMIT 8"""
+        ).fetchall()
+        bank = conn.execute(
+            """SELECT COALESCE(SUM(COALESCE(balance_available, balance_current, 0)), 0) as total
+               FROM plaid_accounts WHERE lower(type) IN ('depository','checking','savings')"""
+        ).fetchone()["total"]
+        income = conn.execute(
+            """SELECT COALESCE(AVG(m_total), 0) as avg
+               FROM (SELECT strftime('%Y-%m', date) as m, SUM(amount) as m_total
+                     FROM transactions WHERE transaction_type='credit' AND category='Income'
+                       AND date >= date('now', '-90 days')
+                     GROUP BY m)"""
+        ).fetchone()["avg"]
+
+    portfolio_total = sum(r["total_value"] or 0 for r in holdings)
+    holdings_text = "\n".join(f"  {r['broker']} {r['ticker'] or r['name']}: ${(r['total_value'] or 0):,.2f}" for r in holdings[:10])
+    spend_text = "\n".join(f"  {r['category']}: ${r['total']:,.2f}" for r in spend)
+
+    prompt = f"""Provide investment advice for a US-based user based on their financial data:
+
+Portfolio (${portfolio_total:,.2f} total):
+{holdings_text or 'No holdings data available'}
+
+Recent spending (last 60 days):
+{spend_text}
+
+Bank balance: ${bank:,.2f}
+Average monthly income: ${income:,.2f}
+
+Give specific, actionable investment insights. Cover: diversification, cash deployment, spending optimization for investing. 3-4 bullet points. Format as WhatsApp message with $ amounts."""
+
+    response = complete(prompt, max_tokens=500)
+    return {"summary": response}
+
+
+def _execute_expense_report(params: dict, snapshot: dict) -> dict:
+    """Generate a comprehensive spending report."""
+    from backend.storage.database import db
+
+    period = params.get("report_period", "this month")
+    if "last month" in period:
+        period_sql = "strftime('%Y-%m', date) = strftime('%Y-%m', date('now', '-1 month'))"
+        period_label = "Last month"
+    elif "this week" in period:
+        period_sql = "date >= date('now', '-7 days')"
+        period_label = "This week"
+    else:
+        period_sql = "strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"
+        period_label = "This month"
+
+    with db() as conn:
+        cats = conn.execute(
+            f"""SELECT category, ROUND(SUM(amount),2) as total, COUNT(*) as cnt
+                FROM transactions WHERE transaction_type='debit' AND {period_sql}
+                GROUP BY category ORDER BY total DESC"""
+        ).fetchall()
+        top5 = conn.execute(
+            f"""SELECT date, description, amount, category
+                FROM transactions WHERE transaction_type='debit' AND {period_sql}
+                ORDER BY amount DESC LIMIT 5"""
+        ).fetchall()
+
+    if not cats:
+        return {"summary": f"No expense data for {period_label.lower()}."}
+
+    total = sum(r["total"] for r in cats)
+    cat_lines = "\n".join(f"  {r['category']}: ${r['total']:,.2f} ({r['cnt']} txns)" for r in cats)
+    top_lines = "\n".join(f"  ${r['amount']:,.2f} — {r['description'][:35]} [{r['category']}]" for r in top5)
+
+    summary = (
+        f"📊 *Expense Report — {period_label}*\n\n"
+        f"*Total: ${total:,.2f}*\n\n"
+        f"*By Category:*\n{cat_lines}\n\n"
+        f"*Top 5 Charges:*\n{top_lines}"
+    )
+    return {"summary": summary}
 
 
 def _execute_custom(task: dict, params: dict, snapshot: dict) -> dict:

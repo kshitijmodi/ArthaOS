@@ -837,6 +837,26 @@ _FINANCE_COMMANDS = {
     "task":      "tasks",
 }
 
+# Scheduling intent — any of these patterns means the user wants a future/recurring task,
+# not an immediate answer. Routes to the task parser instead of RAG.
+_SCHEDULE_KEYWORDS = re.compile(
+    r"\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b"               # "at 9pm", "at 9:30am"
+    r"|\bin\s+\d+\s*(?:hour|day|minute|week)s?\b"              # "in 2 hours", "in 3 days"
+    r"|\bfor\s+(?:the\s+)?next\s+\d+\s*(?:day|week|hour)s?\b" # "for the next 7 days"
+    r"|\bfor\s+\d+\s*(?:day|week|hour)s?\b"                    # "for 3 days"
+    r"|\bevery\s+(?:day|morning|night|hour|week|monday|tuesday|wednesday|thursday|friday)\b"
+    r"|\b(?:daily|weekly|nightly)\s+(?:report|summary|update|digest|check)\b"
+    r"|\b(?:remind|alert)\s+me\s+(?:if|when|at|every)\b"       # "remind me at", "alert me if"
+    r"|\bmonitor\s+(?:my|all|the)\b"                            # "monitor my expenses"
+    r"|\bwatch\s+(?:my|all|the)\b"                              # "watch my spending"
+    r"|\btomorrow\b"
+    r"|\bnext\s+(?:week|month)\b"
+    r"|\bby\s+(?:month|week)\s*end\b"                           # "by month end"
+    r"|\bend\s+of\s+(?:the\s+)?(?:month|week)\b"               # "end of month"
+    r"|\bschedule\s+(?:a|an|me)\b",                             # "schedule a check"
+    re.IGNORECASE,
+)
+
 _BALANCE_KEYWORDS = re.compile(
     r"\b(balance|balances|account\s+balance|how\s+much.*(?:in|have)|what.*balance"
     r"|401k|401\(k\)|fidelity|robinhood|schwab|bilt|portfolio|investments?|net\s+worth)\b",
@@ -992,6 +1012,55 @@ def _handle_balance_query(query: str) -> dict:
     }
 
 
+def _handle_schedule_task(query: str) -> dict:
+    """
+    Parse a free-form scheduling request and create a scheduled task.
+    Unlike _handle_track_command, passes the full query to the task parser
+    (no leading-token stripping).
+    """
+    try:
+        from backend.agent.task_parser import parse_task, build_scheduled_task, save_task
+        parsed = parse_task(query)
+        if not parsed:
+            return {
+                "answer": (
+                    "I couldn't parse that as a scheduled task. Try being more specific:\n"
+                    "  • 'Give me my bank balance at 9pm'\n"
+                    "  • 'Alert me if dining exceeds $300 this month'\n"
+                    "  • 'Monitor my expenses for the next 7 days'\n"
+                    "  • 'Predict my savings by month end'\n"
+                    "  • 'Give me investment advice every Monday morning'"
+                ),
+                "low_confidence": True,
+                "sources": [],
+            }
+
+        task_row = build_scheduled_task(parsed, initiated_by="user")
+        task_id = save_task(task_row)
+        fire_at = task_row["fire_at"]
+        repeat = task_row.get("repeat_interval")
+        repeat_str = f" · repeats {repeat}" if repeat else ""
+
+        return {
+            "answer": (
+                f"✅ *Scheduled!*\n\n"
+                f"*Task:* {task_row['description']}\n"
+                f"*Fires at:* {fire_at} UTC{repeat_str}\n"
+                f"I'll send you the result on WhatsApp automatically.\n"
+                f"Task ID: #{task_id}"
+            ),
+            "low_confidence": False,
+            "sources": [],
+        }
+    except Exception as exc:
+        logger.exception("[Finance] Schedule task failed: %s", exc)
+        return {
+            "answer": f"Failed to schedule task: {exc}",
+            "low_confidence": True,
+            "sources": [],
+        }
+
+
 def _handle_track_command(query: str) -> dict:
     """Parse a natural language track/monitor request and schedule it."""
     # Strip the leading command word (track/monitor/watch)
@@ -1085,12 +1154,17 @@ def _dispatch_finance_command(query: str, history: list[dict] | None = None) -> 
     logger.debug("[Finance] _dispatch: query=%r → sub=%r → action=%r", query, sub, action)
 
     if action is None:
-        # Check if it's a free-form balance question before routing to RAG
+        # Check for scheduling intent first — future/recurring tasks go to the task parser
+        if _SCHEDULE_KEYWORDS.search(query):
+            logger.debug("[Finance] Detected scheduling intent — routing to task parser")
+            return _handle_schedule_task(query)
+
+        # Check if it's a free-form balance question
         if _BALANCE_KEYWORDS.search(query):
             logger.debug("[Finance] Detected balance query — routing to balance handler")
             return _handle_balance_query(query)
 
-        # Not a sub-command — treat as free-form question via RAG (with history for context)
+        # Free-form question — route through RAG with full context
         logger.debug("[Finance] No sub-command match for %r — routing to RAG", query)
         from backend.rag.pipeline import query as rag_query
         result = rag_query(query, history=history or [])

@@ -87,8 +87,8 @@ def start_scheduler():
     # Plaid poll every 30 minutes (offset by 10m to avoid simultaneous DB writes)
     _scheduler.add_job(_plaid_poll, "interval", minutes=30, id="plaid_poll",
                        start_date="2020-01-01 00:10:00")
-    # Scheduled task runner every 30 minutes
-    _scheduler.add_job(_run_due_tasks, "interval", minutes=30, id="task_runner")
+    # Scheduled task runner every 10 minutes (finer-grained for user-scheduled tasks)
+    _scheduler.add_job(_run_due_tasks, "interval", minutes=10, id="task_runner")
 
     _scheduler.start()
     logger.info("[Scheduler] Started — daily fetch at 13:00 ET, agent scan at 13:30 ET, Teller+Plaid poll every 30m")
