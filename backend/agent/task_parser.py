@@ -144,9 +144,27 @@ def parse_task(query: str) -> dict | None:
         balance_keywords = r"\b(balance|balances?|account\s+balance|how\s+much.*(?:in|have))\b"
         savings_keywords = r"\b(sav(e|ings?)|predict|forecast|month\s*end)\b"
         expense_keywords = r"\b(expense\s+report|spending\s+report|breakdown)\b"
+        _broker_map = {
+            "robinhood": "Robinhood",
+            "schwab": "Charles Schwab",
+            "charles schwab": "Charles Schwab",
+            "fidelity": "Fidelity",
+            "401k": "Fidelity",
+            "interactive brokers": "Interactive Brokers - US",
+        }
         if re.search(investment_keywords, q) and task.get("task_type") in ("track_total", "track_category", "custom"):
             task["task_type"] = "monitor_investments"
-            task["description"] = "Investment portfolio snapshot"
+            # Capture broker if mentioned so the executor can filter
+            detected_broker = None
+            for kw, broker_name in _broker_map.items():
+                if kw in q:
+                    detected_broker = broker_name
+                    break
+            if detected_broker:
+                if "params" not in task:
+                    task["params"] = {}
+                task["params"]["broker"] = detected_broker
+            task["description"] = f"{detected_broker or 'Investment'} portfolio snapshot"
         elif re.search(balance_keywords, q) and task.get("task_type") in ("track_total", "track_category", "custom"):
             task["task_type"] = "balance_check"
         elif re.search(savings_keywords, q) and task.get("task_type") in ("track_total", "custom"):

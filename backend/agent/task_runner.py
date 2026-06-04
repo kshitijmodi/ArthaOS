@@ -174,33 +174,59 @@ def _execute_track_total(params: dict, snapshot: dict) -> dict:
 
 
 def _execute_monitor_investments(params: dict, snapshot: dict) -> dict:
-    """Report investment totals by broker with grand total."""
+    """Report investment holdings — filtered by broker if specified, otherwise totals by broker."""
     from backend.storage.database import db
 
+    broker_filter = params.get("broker")
+
     with db() as conn:
-        brokers = conn.execute(
-            """SELECT broker, account, SUM(total_value) as total
-               FROM investment_holdings h
-               WHERE h.as_of_date = (
-                   SELECT MAX(as_of_date) FROM investment_holdings h2
-                   WHERE h2.broker = h.broker AND h2.account = h.account
-               )
-               GROUP BY broker, account
-               ORDER BY total DESC"""
-        ).fetchall()
+        if broker_filter:
+            rows = conn.execute(
+                """SELECT broker, account, ticker, name, quantity, price, total_value, gain_loss
+                   FROM investment_holdings h
+                   WHERE h.as_of_date = (
+                       SELECT MAX(as_of_date) FROM investment_holdings h2
+                       WHERE h2.broker = h.broker AND h2.account = h.account
+                   ) AND LOWER(broker) LIKE ?
+                   ORDER BY total_value DESC""",
+                (f"%{broker_filter.lower()}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT broker, account, NULL as ticker, NULL as name,
+                          NULL as quantity, NULL as price,
+                          SUM(total_value) as total_value, NULL as gain_loss
+                   FROM investment_holdings h
+                   WHERE h.as_of_date = (
+                       SELECT MAX(as_of_date) FROM investment_holdings h2
+                       WHERE h2.broker = h.broker AND h2.account = h.account
+                   )
+                   GROUP BY broker, account
+                   ORDER BY total_value DESC""",
+            ).fetchall()
 
-    if not brokers:
-        return {"summary": "No investment holdings data available yet."}
+    if not rows:
+        label = broker_filter or "any broker"
+        return {"summary": f"No investment holdings found for {label}."}
 
-    lines = ["💼 *Investment Portfolio*\n"]
+    lines = [f"💼 *{broker_filter or 'Investment Portfolio'}*\n"]
     grand_total = 0.0
-    for r in brokers:
-        val = r["total"] or 0.0
+    current_broker = None
+    for r in rows:
+        val = r["total_value"] or 0.0
         grand_total += val
-        lines.append(f"  {r['broker']} — {r['account']}: ${val:,.2f}")
+        if broker_filter:
+            ticker = r["ticker"] or r["name"] or "—"
+            qty = f"{r['quantity']:.4f}".rstrip("0").rstrip(".") if r["quantity"] else "—"
+            price = f"${r['price']:,.2f}" if r["price"] else "—"
+            gl = f" (P&L: ${r['gain_loss']:+,.2f})" if r["gain_loss"] else ""
+            lines.append(f"  {ticker}: {qty} @ {price} = ${val:,.2f}{gl}")
+        else:
+            if r["broker"] != current_broker:
+                current_broker = r["broker"]
+            lines.append(f"  {r['broker']}: ${val:,.2f}")
 
     lines.append(f"\n*Total: ${grand_total:,.2f}*")
-
     return {"summary": "\n".join(lines), "total": grand_total}
 
 
