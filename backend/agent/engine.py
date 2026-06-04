@@ -857,9 +857,16 @@ _SCHEDULE_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Holdings keywords — user wants to see individual stocks/positions, not just totals
+_HOLDINGS_KEYWORDS = re.compile(
+    r"\b(stocks?|holdings?|positions?|shares?|tickers?|what.*(?:in|inside|have in)|"
+    r"(?:all|list|show).*(?:stocks?|holdings?|positions?)|"
+    r"(?:stocks?|holdings?|positions?).*(?:in|inside|at))\b",
+    re.IGNORECASE,
+)
+
 _BALANCE_KEYWORDS = re.compile(
-    r"\b(balance|balances|account\s+balance|how\s+much.*(?:in|have)|what.*balance"
-    r"|401k|401\(k\)|fidelity|robinhood|schwab|bilt|portfolio|investments?|net\s+worth)\b",
+    r"\b(balance|balances|account\s+balance|how\s+much|what.*balance|net\s+worth)\b",
     re.IGNORECASE,
 )
 _INSTITUTION_KEYWORDS = {
@@ -1012,6 +1019,61 @@ def _handle_balance_query(query: str) -> dict:
     }
 
 
+def _handle_holdings_query(query: str) -> dict:
+    """Return individual holdings filtered by broker if mentioned."""
+    query_lower = query.lower()
+    broker_filter = None
+    for keyword, canonical in _INSTITUTION_KEYWORDS.items():
+        if keyword in query_lower:
+            broker_filter = canonical
+            break
+
+    with db() as conn:
+        if broker_filter:
+            rows = conn.execute(
+                """SELECT broker, account, ticker, name, quantity, price, total_value, gain_loss
+                   FROM investment_holdings h
+                   WHERE h.as_of_date = (
+                       SELECT MAX(as_of_date) FROM investment_holdings h2
+                       WHERE h2.broker = h.broker AND h2.account = h.account
+                   ) AND LOWER(broker) LIKE ?
+                   ORDER BY total_value DESC""",
+                (f"%{broker_filter}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT broker, account, ticker, name, quantity, price, total_value, gain_loss
+                   FROM investment_holdings h
+                   WHERE h.as_of_date = (
+                       SELECT MAX(as_of_date) FROM investment_holdings h2
+                       WHERE h2.broker = h.broker AND h2.account = h.account
+                   )
+                   ORDER BY broker, total_value DESC""",
+            ).fetchall()
+
+    if not rows:
+        label = broker_filter.title() if broker_filter else "any broker"
+        return {"answer": f"No holdings found for {label}.", "low_confidence": False, "sources": []}
+
+    lines = []
+    current_broker = None
+    total = 0.0
+    for r in rows:
+        if r["broker"] != current_broker:
+            current_broker = r["broker"]
+            lines.append(f"\n*{r['broker']} — {r['account']}*")
+        mv = r["total_value"] or 0.0
+        total += mv
+        ticker = r["ticker"] or r["name"]
+        qty = f"{r['quantity']:.4f}".rstrip("0").rstrip(".") if r["quantity"] else "—"
+        price = f"${r['price']:,.2f}" if r["price"] else "—"
+        gl = f" (P&L: ${r['gain_loss']:+,.2f})" if r["gain_loss"] else ""
+        lines.append(f"  {ticker}: {qty} shares @ {price} = ${mv:,.2f}{gl}")
+
+    lines.append(f"\n*Total: ${total:,.2f}*")
+    return {"answer": "\n".join(lines).strip(), "low_confidence": False, "sources": []}
+
+
 def _handle_schedule_task(query: str) -> dict:
     """
     Parse a free-form scheduling request and create a scheduled task.
@@ -1158,6 +1220,11 @@ def _dispatch_finance_command(query: str, history: list[dict] | None = None) -> 
         if _SCHEDULE_KEYWORDS.search(query):
             logger.debug("[Finance] Detected scheduling intent — routing to task parser")
             return _handle_schedule_task(query)
+
+        # Holdings query — user wants individual stocks/positions
+        if _HOLDINGS_KEYWORDS.search(query):
+            logger.debug("[Finance] Detected holdings query — routing to holdings handler")
+            return _handle_holdings_query(query)
 
         # Check if it's a free-form balance question
         if _BALANCE_KEYWORDS.search(query):
