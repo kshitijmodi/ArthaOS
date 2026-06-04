@@ -1079,6 +1079,8 @@ class WhatsAppQuery(BaseModel):
 @app.post("/whatsapp/query")
 def whatsapp_query(req: WhatsAppQuery):
     from backend.agent.engine import handle_finance_command
+    import logging
+    logging.getLogger(__name__).info("[WhatsApp] query=%r history_len=%d", req.query, len(req.history or []))
     result = handle_finance_command(req.query, history=req.history or [])
     return {"answer": result.get("answer", ""), "low_confidence": result.get("low_confidence", False)}
 
