@@ -97,9 +97,11 @@ export default function KPICards({ transactions, allTxns, onDrillDown, onKPIDril
       .finally(() => setAcctLoading(false));
   }, []);
 
+  const NON_EXPENSE_CATS = new Set(["Income", "Investments", "Transfer", "Fees & Interest"]);
+
   const m = useMemo(() => {
     const incomes = transactions.filter(t => t.category === "Income");
-    const debits  = transactions.filter(t => t.transaction_type === "debit");
+    const debits  = transactions.filter(t => t.transaction_type === "debit" && !NON_EXPENSE_CATS.has(t.category));
     return {
       incomes, debits,
       income:   incomes.reduce((s, t) => s + t.amount, 0),
@@ -115,7 +117,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, onKPIDril
       const week = allTxns.filter(t => { const d = new Date(t.date); return d >= start && d < end; });
       return {
         income:   week.filter(t => t.category === "Income").reduce((s, t) => s + t.amount, 0),
-        expenses: week.filter(t => t.transaction_type === "debit").reduce((s, t) => s + t.amount, 0),
+        expenses: week.filter(t => t.transaction_type === "debit" && !NON_EXPENSE_CATS.has(t.category)).reduce((s, t) => s + t.amount, 0),
       };
     }).reverse();
   }, [allTxns]);

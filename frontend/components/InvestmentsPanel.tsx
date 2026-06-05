@@ -41,6 +41,9 @@ const BROKER_LABELS: Record<string, string> = {
   charlesschwab: "Schwab / ToS",
   fidelity: "Fidelity 401K",
   "fidelity investments": "Fidelity 401K",
+  "interactive brokers - us": "Interactive Brokers",
+  "interactive brokers": "Interactive Brokers",
+  interactivebrokers: "Interactive Brokers",
 };
 const BROKER_ACCENT: Record<string, string> = {
   robinhood: "text-income",
@@ -49,6 +52,9 @@ const BROKER_ACCENT: Record<string, string> = {
   charlesschwab: "text-savings",
   fidelity: "text-accent",
   "fidelity investments": "text-accent",
+  "interactive brokers - us": "text-warn",
+  "interactive brokers": "text-warn",
+  interactivebrokers: "text-warn",
 };
 const BROKER_BAR: Record<string, string> = {
   robinhood: "bg-income",
@@ -57,6 +63,9 @@ const BROKER_BAR: Record<string, string> = {
   charlesschwab: "bg-savings",
   fidelity: "bg-accent",
   "fidelity investments": "bg-accent",
+  "interactive brokers - us": "bg-warn",
+  "interactive brokers": "bg-warn",
+  interactivebrokers: "bg-warn",
 };
 
 function brokerKey(broker: string): string {
