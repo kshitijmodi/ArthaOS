@@ -1280,34 +1280,13 @@ def _dispatch_finance_command(query: str, history: list[dict] | None = None) -> 
     logger.debug("[Finance] _dispatch: query=%r → sub=%r → action=%r", query, sub, action)
 
     if action is None:
-        # Check for scheduling intent first — future/recurring tasks go to the task parser
+        # Scheduling intent — future/recurring tasks go to the task parser
         if _SCHEDULE_KEYWORDS.search(query):
-            logger.debug("[Finance] Detected scheduling intent — routing to task parser")
+            logger.debug("[Finance] Scheduling intent detected — routing to task parser")
             return _handle_schedule_task(query)
 
-        # Investment advice/insight — analyze actual portfolio data
-        _ADVICE_INTENT = re.compile(
-            r"\b(recommend|suggest|advice|advise|should\s+i|which\s+(?:stocks?|should)|"
-            r"what\s+(?:should|to)\s+(?:buy|sell|invest)|where\s+(?:should|to)\s+invest|"
-            r"best\s+(?:stocks?|investments?)|good\s+(?:stocks?|investments?))\b",
-            re.IGNORECASE,
-        )
-        if _ADVICE_INTENT.search(query):
-            logger.debug("[Finance] Detected investment insight query — routing to insight handler")
-            return _handle_investment_insight_query(query)
-
-        # Holdings query — user wants to VIEW stocks/positions
-        if _HOLDINGS_KEYWORDS.search(query):
-            logger.debug("[Finance] Detected holdings query — routing to holdings handler")
-            return _handle_holdings_query(query)
-
-        # Check if it's a free-form balance question
-        if _BALANCE_KEYWORDS.search(query):
-            logger.debug("[Finance] Detected balance query — routing to balance handler")
-            return _handle_balance_query(query)
-
-        # Free-form question — route through RAG with full context
-        logger.debug("[Finance] No sub-command match for %r — routing to RAG", query)
+        # Everything else — RAG with full financial context + conversation history
+        logger.debug("[Finance] Free-form query — routing to RAG: %r", query)
         from backend.rag.pipeline import query as rag_query
         result = rag_query(query, history=history or [])
         return {
