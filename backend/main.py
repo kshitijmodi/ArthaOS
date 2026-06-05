@@ -1161,10 +1161,15 @@ def teller_sync_now():
 def teller_resync():
     """Delete all Teller-sourced transactions and re-import from scratch."""
     try:
-        with db() as conn:
-            deleted = conn.execute(
-                "DELETE FROM transactions WHERE source_file LIKE 'teller:%'"
-            ).rowcount
+        from backend.storage.database import get_connection
+        conn = get_connection()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        deleted = conn.execute(
+            "DELETE FROM transactions WHERE source_file LIKE 'teller:%'"
+        ).rowcount
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.close()
         from backend.teller.sync import sync_all
         result = sync_all()
         result["deleted"] = deleted
@@ -1281,11 +1286,16 @@ def plaid_sync_now():
 def plaid_resync():
     """Delete all Plaid-sourced transactions and re-import from scratch."""
     try:
-        with db() as conn:
-            deleted = conn.execute(
-                "DELETE FROM transactions WHERE source_file LIKE 'plaid:%'"
-            ).rowcount
-            conn.execute("UPDATE plaid_items SET cursor = NULL WHERE status = 'active'")
+        from backend.storage.database import get_connection
+        conn = get_connection()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        deleted = conn.execute(
+            "DELETE FROM transactions WHERE source_file LIKE 'plaid:%'"
+        ).rowcount
+        conn.execute("UPDATE plaid_items SET cursor = NULL WHERE status = 'active'")
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.close()
         from backend.plaid.sync import sync_all
         result = sync_all()
         result["deleted"] = deleted
