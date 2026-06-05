@@ -109,6 +109,13 @@ export default function Page() {
     setMobileNavOpen(false);
   }, []);
 
+  // Lift category change so it updates allTxns (feeds dashboard KPIs/charts)
+  const handleCategoryChange = useCallback(async (id: number, category: string) => {
+    const { updateCategory } = await import("@/lib/api");
+    await updateCategory(id, category);
+    setAllTxns(prev => prev.map(t => t.id === id ? { ...t, category, category_source: "user" as const } : t));
+  }, []);
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
       {/* Mobile backdrop */}
@@ -164,7 +171,7 @@ export default function Page() {
               <h1 className="text-xl font-bold text-tx">Transactions</h1>
               <p className="text-sm text-tx-2 mt-1">Full history with search, star, and category editing</p>
             </div>
-            <TransactionTable />
+            <TransactionTable onCategoryChange={handleCategoryChange} />
           </div>
         )}
         {activeView === "investments" && (

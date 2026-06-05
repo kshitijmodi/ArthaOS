@@ -14,7 +14,11 @@ function detectPaymentMethod(desc: string): string {
   return "";
 }
 
-export default function TransactionTable() {
+interface Props {
+  onCategoryChange?: (id: number, category: string) => Promise<void>;
+}
+
+export default function TransactionTable({ onCategoryChange }: Props = {}) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -56,8 +60,12 @@ export default function TransactionTable() {
   useEffect(() => { load(); }, [load]);
 
   const handleCategoryChange = async (id: number, category: string) => {
-    await updateCategory(id, category);
-    setTransactions(prev => prev.map(t => t.id === id ? { ...t, category, category_source: "user" } : t));
+    if (onCategoryChange) {
+      await onCategoryChange(id, category);
+    } else {
+      await updateCategory(id, category);
+    }
+    setTransactions(prev => prev.map(t => t.id === id ? { ...t, category, category_source: "user" as const } : t));
     setEditingId(null);
   };
 

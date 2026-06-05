@@ -154,35 +154,41 @@ def sync_item(item_id: str, access_token: str, institution: str) -> dict:
         })
 
     # ── Phase 2: write to DB ─────────────────────────────────────────────── #
+    # Each write is a separate DB transaction so one failure doesn't block others.
 
     new_txns = 0
     next_cursor = tx_result["next_cursor"]
 
-    with db() as conn:
-        # Upsert account balances
-        for acct in accounts_raw:
+    # 2a. Upsert account balances
+    for acct in accounts_raw:
+        try:
             bal = acct.get("balances", {})
-            conn.execute(
-                """INSERT INTO plaid_accounts
-                   (account_id, item_id, institution, name, official_name,
-                    type, subtype, currency,
-                    balance_available, balance_current, balance_limit, last_synced_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-                   ON CONFLICT(account_id) DO UPDATE SET
-                     balance_available = excluded.balance_available,
-                     balance_current   = excluded.balance_current,
-                     balance_limit     = excluded.balance_limit,
-                     last_synced_at    = CURRENT_TIMESTAMP""",
-                (
-                    acct["account_id"], item_id, institution,
-                    acct.get("name", ""), acct.get("official_name"),
-                    acct.get("type", ""), acct.get("subtype", ""),
-                    (bal.get("iso_currency_code") or "USD"),
-                    bal.get("available"), bal.get("current"), bal.get("limit"),
-                ),
-            )
+            with db() as conn:
+                conn.execute(
+                    """INSERT INTO plaid_accounts
+                       (account_id, item_id, institution, name, official_name,
+                        type, subtype, currency,
+                        balance_available, balance_current, balance_limit, last_synced_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                       ON CONFLICT(account_id) DO UPDATE SET
+                         balance_available = excluded.balance_available,
+                         balance_current   = excluded.balance_current,
+                         balance_limit     = excluded.balance_limit,
+                         last_synced_at    = CURRENT_TIMESTAMP""",
+                    (
+                        acct["account_id"], item_id, institution,
+                        acct.get("name", ""), acct.get("official_name"),
+                        acct.get("type", ""), acct.get("subtype", ""),
+                        (bal.get("iso_currency_code") or "USD"),
+                        bal.get("available"), bal.get("current"), bal.get("limit"),
+                    ),
+                )
+        except Exception as exc:
+            logger.warning("[PlaidSync] Account upsert failed for %s/%s: %s",
+                           institution, acct.get("account_id"), exc)
 
-        # Insert new transactions
+    # 2b. Insert new transactions
+    with db() as conn:
         for row in prepared_added:
             if conn.execute(
                 "SELECT 1 FROM transactions WHERE source_file = ?", (row["source_file"],)
@@ -205,47 +211,48 @@ def sync_item(item_id: str, access_token: str, institution: str) -> dict:
             )
             new_txns += 1
 
-        # Remove transactions Plaid has reversed/removed
+        # Remove reversed/removed transactions
         for sf in removed_source_files:
             conn.execute("DELETE FROM transactions WHERE source_file = ?", (sf,))
 
-        # Upsert investment holdings (today's snapshot).
-        # Before inserting, remove any stale rows for the same broker+as_of_date
-        # that have a generic account name (e.g. "Investment") that was stored
-        # during an earlier sync before Plaid returned the real account name.
-        if prepared_holdings:
-            real_accounts = {h["acc_name"] for h in prepared_holdings}
-            conn.execute(
-                """DELETE FROM investment_holdings
-                   WHERE lower(broker) = lower(?)
-                     AND as_of_date = ?
-                     AND account NOT IN ({})""".format(
-                    ",".join("?" * len(real_accounts))
-                ),
-                [institution, today] + list(real_accounts),
-            )
+    # 2c. Upsert investment holdings
+    if prepared_holdings:
+        try:
+            with db() as conn:
+                real_accounts = {h["acc_name"] for h in prepared_holdings}
+                conn.execute(
+                    """DELETE FROM investment_holdings
+                       WHERE lower(broker) = lower(?)
+                         AND as_of_date = ?
+                         AND account NOT IN ({})""".format(
+                        ",".join("?" * len(real_accounts))
+                    ),
+                    [institution, today] + list(real_accounts),
+                )
+                for h in prepared_holdings:
+                    conn.execute(
+                        """INSERT INTO investment_holdings
+                           (as_of_date, ticker, name, quantity, price, total_value,
+                            cost_basis, gain_loss, gain_loss_pct, gain_loss_day,
+                            account, broker, source_file)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(as_of_date, ticker, account, source_file)
+                           DO UPDATE SET
+                             quantity      = excluded.quantity,
+                             price         = excluded.price,
+                             total_value   = excluded.total_value,
+                             cost_basis    = excluded.cost_basis,
+                             gain_loss     = excluded.gain_loss,
+                             gain_loss_pct = excluded.gain_loss_pct""",
+                        (today, h["ticker"], h["name"], h["quantity"], h["price"],
+                         h["total_value"], h["cost_basis"], h["gain_loss"], h["gain_loss_pct"],
+                         h["gain_loss_day"], h["acc_name"], institution, h["source_file"]),
+                    )
+        except Exception as exc:
+            logger.warning("[PlaidSync] Holdings upsert failed for %s: %s", institution, exc)
 
-        for h in prepared_holdings:
-            conn.execute(
-                """INSERT INTO investment_holdings
-                   (as_of_date, ticker, name, quantity, price, total_value,
-                    cost_basis, gain_loss, gain_loss_pct, gain_loss_day,
-                    account, broker, source_file)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(as_of_date, ticker, account, source_file)
-                   DO UPDATE SET
-                     quantity      = excluded.quantity,
-                     price         = excluded.price,
-                     total_value   = excluded.total_value,
-                     cost_basis    = excluded.cost_basis,
-                     gain_loss     = excluded.gain_loss,
-                     gain_loss_pct = excluded.gain_loss_pct""",
-                (today, h["ticker"], h["name"], h["quantity"], h["price"],
-                 h["total_value"], h["cost_basis"], h["gain_loss"], h["gain_loss_pct"],
-                 h["gain_loss_day"], h["acc_name"], institution, h["source_file"]),
-            )
-
-        # Persist cursor and last_synced_at
+    # 2d. Persist cursor
+    with db() as conn:
         conn.execute(
             """UPDATE plaid_items
                SET cursor = ?, last_synced_at = CURRENT_TIMESTAMP

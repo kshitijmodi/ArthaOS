@@ -1159,18 +1159,20 @@ def teller_sync_now():
 
 @app.post("/teller/resync")
 def teller_resync():
-    """
-    Delete all Teller-sourced transactions and re-import from scratch.
-    Use this to fix sign/type issues after a sync.py correction.
-    """
-    with db() as conn:
-        deleted = conn.execute(
-            "DELETE FROM transactions WHERE source_file LIKE 'teller:%'"
-        ).rowcount
-    from backend.teller.sync import sync_all
-    result = sync_all()
-    result["deleted"] = deleted
-    return result
+    """Delete all Teller-sourced transactions and re-import from scratch."""
+    try:
+        with db() as conn:
+            deleted = conn.execute(
+                "DELETE FROM transactions WHERE source_file LIKE 'teller:%'"
+            ).rowcount
+        from backend.teller.sync import sync_all
+        result = sync_all()
+        result["deleted"] = deleted
+        return result
+    except Exception as exc:
+        import logging, traceback
+        logging.getLogger(__name__).error("[TellerResync] Failed: %s\n%s", exc, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Teller resync failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1278,16 +1280,20 @@ def plaid_sync_now():
 @app.post("/plaid/resync")
 def plaid_resync():
     """Delete all Plaid-sourced transactions and re-import from scratch."""
-    with db() as conn:
-        deleted = conn.execute(
-            "DELETE FROM transactions WHERE source_file LIKE 'plaid:%'"
-        ).rowcount
-        # Reset cursors so sync_all re-fetches everything
-        conn.execute("UPDATE plaid_items SET cursor = NULL WHERE status = 'active'")
-    from backend.plaid.sync import sync_all
-    result = sync_all()
-    result["deleted"] = deleted
-    return result
+    try:
+        with db() as conn:
+            deleted = conn.execute(
+                "DELETE FROM transactions WHERE source_file LIKE 'plaid:%'"
+            ).rowcount
+            conn.execute("UPDATE plaid_items SET cursor = NULL WHERE status = 'active'")
+        from backend.plaid.sync import sync_all
+        result = sync_all()
+        result["deleted"] = deleted
+        return result
+    except Exception as exc:
+        import logging, traceback
+        logging.getLogger(__name__).error("[PlaidResync] Failed: %s\n%s", exc, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Plaid resync failed: {exc}")
 
 
 @app.post("/categorizer/fix-invalid")
