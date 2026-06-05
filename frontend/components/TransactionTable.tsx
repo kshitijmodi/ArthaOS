@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronLeft, ChevronRight, AlertCircle, Search, ArrowUpDown, Star, DollarSign } from "lucide-react";
 import { getTransactions, updateCategory, starTransaction, Transaction, apiFetch } from "@/lib/api";
 import { CATEGORIES, formatCurrency, formatDate, cn } from "@/lib/utils";
@@ -36,8 +36,20 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [starredOnly, setStarredOnly] = useState(false);
   const [chargesOnly, setChargesOnly] = useState(false);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const loadIdRef = useRef(0);
+
+  // Debounce search: fire 300ms after typing stops and reset to page 1 atomically
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const load = useCallback(async () => {
+    const id = ++loadIdRef.current;
     setLoading(true);
     try {
       const res = await getTransactions({
@@ -48,14 +60,17 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
         sort_dir: sortDir,
         starred: starredOnly || undefined,
         charges_only: chargesOnly || undefined,
-        query: search || undefined,
+        query: debouncedSearch || undefined,
       });
-      setTransactions(res.transactions);
-      setTotal(res.total);
+      // Discard results from superseded requests
+      if (id === loadIdRef.current) {
+        setTransactions(res.transactions);
+        setTotal(res.total);
+      }
     } finally {
-      setLoading(false);
+      if (id === loadIdRef.current) setLoading(false);
     }
-  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly, search]);
+  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly, debouncedSearch]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -99,7 +114,7 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
           <Search size={13} className="text-tx-3 shrink-0" />
           <input
             value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1); }}
+            onChange={e => setSearch(e.target.value)}
             placeholder="Search transactions…"
             className="bg-transparent text-sm text-tx placeholder:text-tx-3 outline-none w-full"
           />

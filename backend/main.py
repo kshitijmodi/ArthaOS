@@ -198,8 +198,10 @@ def get_transactions(
     if charges_only is True:
         filters.append("category = 'Fees & Interest'")
     if query:
-        filters.append("description LIKE ?")
-        params.append(f"%{query}%")
+        filters.append(
+            "(description LIKE ? OR COALESCE(institution,'') LIKE ? OR COALESCE(account_name,'') LIKE ? OR COALESCE(category,'') LIKE ?)"
+        )
+        params.extend([f"%{query}%"] * 4)
 
     where = " AND ".join(filters)
     offset = (page - 1) * page_size
