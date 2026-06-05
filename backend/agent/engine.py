@@ -1221,8 +1221,14 @@ def _dispatch_finance_command(query: str, history: list[dict] | None = None) -> 
             logger.debug("[Finance] Detected scheduling intent — routing to task parser")
             return _handle_schedule_task(query)
 
-        # Holdings query — user wants individual stocks/positions
-        if _HOLDINGS_KEYWORDS.search(query):
+        # Holdings query — user wants to VIEW stocks/positions (not asking for advice)
+        _ADVICE_INTENT = re.compile(
+            r"\b(recommend|suggest|advice|advise|should\s+i|which\s+(?:stocks?|should)|"
+            r"what\s+(?:should|to)\s+(?:buy|sell|invest)|where\s+(?:should|to)\s+invest|"
+            r"best\s+(?:stocks?|investments?)|good\s+(?:stocks?|investments?))\b",
+            re.IGNORECASE,
+        )
+        if _HOLDINGS_KEYWORDS.search(query) and not _ADVICE_INTENT.search(query):
             logger.debug("[Finance] Detected holdings query — routing to holdings handler")
             return _handle_holdings_query(query)
 
