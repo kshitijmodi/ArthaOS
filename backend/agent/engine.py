@@ -1019,6 +1019,70 @@ def _handle_balance_query(query: str) -> dict:
     }
 
 
+def _handle_investment_insight_query(query: str) -> dict:
+    """
+    Analyze the user's actual portfolio + spending and provide personalized insights.
+    Frames the request as financial analysis of their own data — not generic advice.
+    """
+    from backend.rag.llm import complete
+
+    with db() as conn:
+        holdings = conn.execute(
+            """SELECT broker, ticker, name, total_value, gain_loss
+               FROM investment_holdings h
+               WHERE h.as_of_date = (
+                   SELECT MAX(as_of_date) FROM investment_holdings h2
+                   WHERE h2.broker = h.broker AND h2.account = h.account
+               )
+               ORDER BY broker, total_value DESC"""
+        ).fetchall()
+        spending = conn.execute(
+            """SELECT category, ROUND(SUM(amount),2) as total
+               FROM transactions WHERE transaction_type='debit'
+                 AND date >= date('now','-60 days')
+               GROUP BY category ORDER BY total DESC LIMIT 8"""
+        ).fetchall()
+        bank = conn.execute(
+            """SELECT COALESCE(SUM(COALESCE(balance_available, balance_current, 0)), 0) as total
+               FROM plaid_accounts WHERE lower(type) IN ('depository','checking','savings')"""
+        ).fetchone()["total"]
+        income = conn.execute(
+            """SELECT COALESCE(AVG(m), 0) as avg
+               FROM (SELECT SUM(amount) as m FROM transactions
+                     WHERE transaction_type='credit' AND category='Income'
+                       AND date >= date('now','-90 days')
+                     GROUP BY strftime('%Y-%m', date))"""
+        ).fetchone()["avg"]
+
+    portfolio_total = sum(r["total_value"] or 0 for r in holdings)
+    holdings_text = "\n".join(
+        f"  {r['broker']} {r['ticker'] or r['name']}: ${(r['total_value'] or 0):,.2f}"
+        + (f" (P&L: ${r['gain_loss']:+,.2f})" if r["gain_loss"] else "")
+        for r in holdings[:12]
+    )
+    spend_text = "\n".join(f"  {r['category']}: ${r['total']:,.2f}" for r in spending)
+
+    prompt = f"""You are a personal financial analyst reviewing this specific user's financial data.
+Analyze their portfolio and spending, then answer their question with concrete, personalized insights.
+
+User's portfolio (${portfolio_total:,.2f} total):
+{holdings_text or 'No holdings data'}
+
+Spending last 60 days:
+{spend_text}
+
+Bank balance: ${bank:,.2f}
+Monthly income (avg): ${income:,.2f}
+
+User's question: {query}
+
+Give specific analysis based on THEIR actual numbers above. Be direct and actionable.
+Reference their actual holdings, amounts, and spending patterns. 3-5 bullet points max."""
+
+    answer = complete(prompt, max_tokens=500)
+    return {"answer": answer, "low_confidence": False, "sources": []}
+
+
 def _handle_holdings_query(query: str) -> dict:
     """Return individual holdings filtered by broker if mentioned."""
     query_lower = query.lower()
@@ -1221,14 +1285,19 @@ def _dispatch_finance_command(query: str, history: list[dict] | None = None) -> 
             logger.debug("[Finance] Detected scheduling intent — routing to task parser")
             return _handle_schedule_task(query)
 
-        # Holdings query — user wants to VIEW stocks/positions (not asking for advice)
+        # Investment advice/insight — analyze actual portfolio data
         _ADVICE_INTENT = re.compile(
             r"\b(recommend|suggest|advice|advise|should\s+i|which\s+(?:stocks?|should)|"
             r"what\s+(?:should|to)\s+(?:buy|sell|invest)|where\s+(?:should|to)\s+invest|"
             r"best\s+(?:stocks?|investments?)|good\s+(?:stocks?|investments?))\b",
             re.IGNORECASE,
         )
-        if _HOLDINGS_KEYWORDS.search(query) and not _ADVICE_INTENT.search(query):
+        if _ADVICE_INTENT.search(query):
+            logger.debug("[Finance] Detected investment insight query — routing to insight handler")
+            return _handle_investment_insight_query(query)
+
+        # Holdings query — user wants to VIEW stocks/positions
+        if _HOLDINGS_KEYWORDS.search(query):
             logger.debug("[Finance] Detected holdings query — routing to holdings handler")
             return _handle_holdings_query(query)
 
