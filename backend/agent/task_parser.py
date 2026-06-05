@@ -1,18 +1,14 @@
 """
-Task parser — converts natural language finance commands into structured scheduled tasks.
+Task parser — converts natural language scheduling requests into structured tasks.
 
-Examples:
-  "track my dining spend for 3 days"
-  → {task_type: "track_category", params: {category: "Dining"}, duration_days: 3}
+Architecture: query_replay is the default task type.
+Instead of classifying queries into predefined types and running hardcoded executors,
+we strip the time phrase, store the original query, and replay it through
+handle_finance_command() at fire time. This means any query that works in real-time
+automatically works when scheduled — no type classification needed.
 
-  "monitor investments for 1 hour, tell me biggest losers"
-  → {task_type: "monitor_investments", params: {metric: "loss"}, duration_hours: 1}
-
-  "alert me if I spend more than $100 on shopping today"
-  → {task_type: "threshold_alert", params: {category: "Shopping", threshold: 100}, duration_days: 1}
-
-  "summarize my spending every morning at 9am"
-  → {task_type: "daily_summary", params: {time: "09:00"}, repeat_interval: "daily"}
+Special executors (threshold_alert, track_category, track_total) are kept only for
+tasks that require snapshot comparison or threshold checking over time.
 """
 import json
 import logging
@@ -21,290 +17,227 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-# ── Task-type override helpers ───────────────────────────────────────────────
 
-_BROKER_MAP = {
-    "robinhood":           "Robinhood",
-    "schwab":              "Charles Schwab",
-    "charles schwab":      "Charles Schwab",
-    "fidelity":            "Fidelity",
-    "401k":                "Fidelity",
-    "interactive brokers": "Interactive Brokers - US",
-}
-_HOLDINGS_PAT = re.compile(
-    r"\b(stocks?|holdings?|positions?|shares?|portfolio|investments?\s+total|total\s+investments?)\b",
-    re.IGNORECASE,
-)
-_INVEST_PAT  = re.compile(r"\b(invest|investments?|401k|brokerage)\b", re.IGNORECASE)
-_ADVICE_PAT  = re.compile(
-    r"\b(advice|advise|recommend|suggest|should\s+i|what\s+to\s+(?:buy|sell|invest)"
-    r"|where\s+to\s+invest|optimize)\b",
-    re.IGNORECASE,
-)
-_BALANCE_PAT = re.compile(r"\b(balance|balances?|account\s+balance|how\s+much)\b", re.IGNORECASE)
-_SAVINGS_PAT = re.compile(
-    r"\b(sav(?:e|ings?)|predict|forecast|month\s*end|end\s+of\s+(?:the\s+)?month)\b",
-    re.IGNORECASE,
-)
-_EXPENSE_PAT = re.compile(r"\b(expense\s+report|spending\s+report|breakdown)\b", re.IGNORECASE)
+# ── Time extraction ──────────────────────────────────────────────────────────
 
-
-def _override_task_type(query: str, task: dict) -> dict:
-    """
-    Correct LLM task_type misclassifications using reliable regex signal detection.
-    Called after LLM parsing — takes precedence over the LLM's choice.
-    """
-    detected_broker = next((name for kw, name in _BROKER_MAP.items() if kw in query.lower()), None)
-    wants_holdings  = bool(_HOLDINGS_PAT.search(query))
-    has_invest      = bool(_INVEST_PAT.search(query)) or detected_broker is not None
-    wants_advice    = bool(_ADVICE_PAT.search(query))
-
-    if wants_holdings or (has_invest and not wants_advice):
-        task["task_type"] = "monitor_investments"
-        if detected_broker:
-            task.setdefault("params", {})["broker"] = detected_broker
-        task["description"] = f"{detected_broker or 'Investment'} portfolio snapshot"
-    elif task.get("task_type") == "investment_advice" and not wants_advice:
-        task["task_type"] = "monitor_investments"
-        if detected_broker:
-            task.setdefault("params", {})["broker"] = detected_broker
-        task["description"] = f"{detected_broker or 'Investment'} portfolio snapshot"
-    elif _BALANCE_PAT.search(query) and not wants_holdings and not has_invest:
-        task["task_type"] = "balance_check"
-        task["description"] = "Account balance check"
-    elif _SAVINGS_PAT.search(query):
-        task["task_type"] = "predict_savings"
-    elif _EXPENSE_PAT.search(query):
-        task["task_type"] = "expense_report"
-
-    return task
-
-
-def _extract_local_time(query: str) -> str | None:
-    """
-    Extract a clock time from the query using regex and return HH:MM (24h).
-    E.g. "at 4:18pm" → "16:18", "at 9am" → "09:00".
-    Returns None if no time found.
-    """
-    m = re.search(
-        r"\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
-        query,
-        re.IGNORECASE,
-    )
-    if not m:
-        return None
-    hour = int(m.group(1))
-    minute = int(m.group(2)) if m.group(2) else 0
-    meridiem = m.group(3).lower()
-    if meridiem == "pm" and hour != 12:
-        hour += 12
-    elif meridiem == "am" and hour == 12:
-        hour = 0
-    return f"{hour:02d}:{minute:02d}"
-
-# ET offset in hours from UTC. EDT (summer) = -4, EST (winter) = -5.
-# DST in US: second Sunday March → first Sunday November.
 def _et_utc_offset() -> int:
-    now = datetime.utcnow()
-    month = now.month
-    # Approximate: EDT from March through October, EST Nov–Feb
+    """EDT (summer) = UTC-4, EST (winter) = UTC-5."""
+    month = datetime.utcnow().month
     return -4 if 3 <= month <= 10 else -5
 
 
-_TASK_PARSE_PROMPT = """You are a financial task parser. Current date/time: {current_et} ET ({current_utc} UTC).
+def _extract_local_time(query: str) -> str | None:
+    """Extract clock time from query and return HH:MM (24h ET). E.g. 'at 4:18pm' → '16:18'."""
+    m = re.search(r"\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", query, re.IGNORECASE)
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2)) if m.group(2) else 0
+    mer = m.group(3).lower()
+    if mer == "pm" and hour != 12:
+        hour += 12
+    elif mer == "am" and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{minute:02d}"
 
-Convert the user's natural language request into a structured JSON task.
 
-Available task types:
-- track_category: Track spending in a specific category over N days
-- track_total: Track total spending (all categories) over N days
-- monitor_investments: Check investment portfolio performance
-- threshold_alert: Alert if spend in a category exceeds a dollar amount
-- daily_summary: Send a daily spending summary
-- balance_check: Check account balances at a scheduled time
-- predict_savings: Predict how much the user will save by month end
-- investment_advice: Analyze portfolio + spending and give investment recommendations
-- expense_report: Generate a comprehensive spending report for a period
-- custom: Any other financial monitoring or analysis task
+def _detect_repeat_interval(query: str) -> str | None:
+    q = query.lower()
+    if re.search(r"\bevery\s+(?:day|daily|morning|night|evening)\b", q):
+        return "daily"
+    if re.search(r"\bevery\s+(?:week|weekly|monday|tuesday|wednesday|thursday|friday)\b", q):
+        return "weekly"
+    if re.search(r"\bevery\s+hour\b|\bhourly\b", q):
+        return "hourly"
+    return None
 
-Return ONLY valid JSON with these fields:
+
+# Scheduling phrases to strip from the query before storing for replay
+_TIME_STRIP_PATTERNS = [
+    r"\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b",        # "at 5pm", "at 12:27am"
+    r"\btomorrow\b",
+    r"\bin\s+\d+\s*(?:hour|minute|min|day|week)s?\b",   # "in 2 hours"
+    r"\bfor\s+(?:the\s+)?next\s+\d+\s*(?:day|week|hour)s?\b",  # "for the next 7 days"
+    r"\bevery\s+(?:day|morning|night|hour|week|monday|tuesday|wednesday|thursday|friday)\b",
+    r"\bby\s+month\s*end\b",
+    r"\bend\s+of\s+(?:the\s+)?month\b",
+    r"\bschedule\s+(?:a|an|me\s+a?)?\b",                # "schedule a ..."
+    r"\bsend\s+me\b",                                    # "send me balance" → "balance"
+]
+
+
+def _strip_scheduling_phrases(query: str) -> str:
+    """Remove time/scheduling phrases, leaving the core financial question."""
+    q = query
+    for pat in _TIME_STRIP_PATTERNS:
+        q = re.sub(pat, " ", q, flags=re.IGNORECASE)
+    q = re.sub(r"\s+", " ", q).strip().strip(",.:;")
+    return q or query  # fallback to original if everything stripped
+
+
+# ── Threshold/tracking intent detection ─────────────────────────────────────
+
+_THRESHOLD_PAT = re.compile(
+    r"\b(?:alert|notify|warn|tell)\s+me\s+if\b.*?\$[\d,]+|\b(?:exceeds?|over|above|more\s+than)\b.*?\$[\d,]+",
+    re.IGNORECASE,
+)
+_TRACK_PAT = re.compile(
+    r"\btrack\s+(?:my\s+)?(\w+)\s+(?:spend|spending|expenses?)\s+for\s+(\d+)\s+days?\b",
+    re.IGNORECASE,
+)
+
+# LLM prompt — used only for threshold_alert and track tasks that need structured params
+_LLM_PROMPT = """You are a financial task parser. Current time: {current_et} ET.
+
+Return ONLY valid JSON:
 {{
-  "task_type": "<type>",
-  "description": "<human readable one-line description>",
+  "task_type": "threshold_alert or track_category or track_total",
+  "description": "<one line>",
   "params": {{
-    "category": "<category name if applicable, else null>",
-    "threshold": <dollar amount if applicable, else null>,
-    "metric": "<what to measure: spend/loss/gain/balance>",
-    "fire_at_local": "<HH:MM 24-hour in ET — the exact time the user said, e.g. '16:18' for 4:18pm>",
-    "report_period": "<this month/last month/this week if mentioned, else null>",
-    "summary_type": "<spending/investments/alerts/all>"
+    "category": "<Groceries/Dining/Travel/Shopping/etc or null>",
+    "threshold": <number or null>,
+    "fire_at_local": "<HH:MM if user said 'at X pm', else null>"
   }},
-  "duration_hours": <hours until task fires if relative like 'in 3 hours', else null>,
-  "duration_days": <days until task fires if relative like 'in 2 days'/'for next week', else null>,
-  "repeat_interval": "<daily/weekly/hourly or null for one-shot>"
+  "duration_hours": <number or null>,
+  "duration_days": <number or null>,
+  "repeat_interval": "<daily/weekly/hourly or null>"
 }}
-
-Time rules:
-- "at 4:18pm" → fire_at_local: "16:18"
-- "at 9pm" → fire_at_local: "21:00"
-- "at 9am tomorrow" → fire_at_local: "09:00", duration_days: 1
-- "in 2 hours" → duration_hours: 2, fire_at_local: null
-- "tomorrow morning" → fire_at_local: "09:00", duration_days: 1
-- "every day at 9am" → fire_at_local: "09:00", repeat_interval: "daily"
-- "for the next 7 days" → duration_days: 7
-- "by month end" → duration_days: days remaining in current month
-- If no time given for one-shot tasks, default: duration_hours: 1
-
-Category mapping: Groceries, Dining, Travel, Shopping, Utilities, Subscriptions, Insurance, EMIs, Rent, Healthcare, Education, Investments, Income, Miscellaneous
 
 User request: {query}"""
 
 
-def parse_task(query: str) -> dict | None:
-    """
-    Parse a natural language task request into a structured task dict.
-    Returns None if the query doesn't look like a task request.
-    """
+def _parse_with_llm(query: str) -> dict | None:
+    """Use LLM only for threshold_alert / tracking tasks that need structured params."""
     try:
         from backend.rag.llm import complete
         offset = _et_utc_offset()
-        now_utc = datetime.utcnow()
-        now_et = now_utc + timedelta(hours=offset)
-        prompt = (_TASK_PARSE_PROMPT
+        now_et = datetime.utcnow() + timedelta(hours=offset)
+        prompt = (_LLM_PROMPT
                   .replace("{current_et}", now_et.strftime("%Y-%m-%d %H:%M"))
-                  .replace("{current_utc}", now_utc.strftime("%Y-%m-%d %H:%M"))
                   .replace("{query}", query))
-        raw = complete(
-            prompt,
-            max_tokens=400,
-            system="You are a JSON-only response bot. Return only valid JSON, no explanation.",
-        )
-        # Strip markdown code fences if present
+        raw = complete(prompt, max_tokens=300,
+                       system="Return only valid JSON, no explanation.")
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        raw = raw.strip()
-        task = json.loads(raw)
-        # Override LLM time output with Python-parsed local time (reliable)
-        local_time = _extract_local_time(query)
-        if local_time:
-            if "params" not in task:
-                task["params"] = {}
-            task["params"]["fire_at_local"] = local_time
-            task["params"].pop("fire_at_time", None)  # remove old field if present
-            logger.debug("[TaskParser] Regex extracted local time: %s", local_time)
-
-        # Override LLM task_type — Python signal detection is more reliable than LLM for this
-        task = _override_task_type(query, task)
-
-        return task
+        return json.loads(raw.strip())
     except Exception as exc:
-        logger.warning("[TaskParser] Failed to parse task from %r: %s", query, exc)
+        logger.warning("[TaskParser] LLM parse failed: %s", exc)
         return None
 
 
-def build_scheduled_task(parsed: dict, initiated_by: str = "user") -> dict:
+def parse_task(query: str) -> dict | None:
     """
-    Convert parsed task dict into a scheduled_tasks DB row dict.
-    fire_at_local is ET local time from LLM — Python converts to UTC.
-    """
-    now_utc = datetime.utcnow()
-    offset = _et_utc_offset()  # -4 (EDT) or -5 (EST)
-    now_et = now_utc + timedelta(hours=offset)
+    Parse a scheduling request. Returns a task dict or None.
 
-    params = parsed.get("params", {})
-    fire_at_local = params.get("fire_at_local")  # "HH:MM" in ET
+    For most queries: uses query_replay (stores the stripped query, replays it at fire time).
+    For threshold alerts / multi-day tracking: uses LLM to extract structured params.
+    """
+    # ── Detect if this needs LLM (threshold / multi-day tracking) ──
+    is_threshold = bool(_THRESHOLD_PAT.search(query))
+    is_track     = bool(_TRACK_PAT.search(query))
+
+    if is_threshold or is_track:
+        task = _parse_with_llm(query)
+        if task:
+            local_time = _extract_local_time(query)
+            if local_time:
+                task.setdefault("params", {})["fire_at_local"] = local_time
+            task["repeat_interval"] = _detect_repeat_interval(query) or task.get("repeat_interval")
+            return task
+        # Fall through to query_replay if LLM fails
+
+    # ── Default: query_replay ──────────────────────────────────────
+    local_time      = _extract_local_time(query)
+    repeat_interval = _detect_repeat_interval(query)
+    core_query      = _strip_scheduling_phrases(query)
+
+    return {
+        "task_type": "query_replay",
+        "description": f"Scheduled: {core_query}",
+        "params": {
+            "query": core_query,
+            "fire_at_local": local_time,
+        },
+        "duration_hours": None,
+        "duration_days": None,
+        "repeat_interval": repeat_interval,
+    }
+
+
+def build_scheduled_task(parsed: dict, initiated_by: str = "user") -> dict:
+    """Convert parsed task dict into a scheduled_tasks DB row. Converts ET time to UTC."""
+    now_utc = datetime.utcnow()
+    offset  = _et_utc_offset()
+    now_et  = now_utc + timedelta(hours=offset)
+
+    params        = parsed.get("params", {})
+    fire_at_local = params.get("fire_at_local")
 
     if fire_at_local:
         try:
             h, m = map(int, fire_at_local.split(":"))
-            # Build fire time in ET, then convert to UTC
             fire_et = now_et.replace(hour=h, minute=m, second=0, microsecond=0)
             extra_days = parsed.get("duration_days") or 0
             if fire_et <= now_et or extra_days > 0:
                 fire_et += timedelta(days=max(1, extra_days))
-            fire_at = fire_et - timedelta(hours=offset)  # ET → UTC
+            fire_at = fire_et - timedelta(hours=offset)
         except Exception:
             fire_at = now_utc + timedelta(hours=1)
     else:
         duration_hours = parsed.get("duration_hours") or 0
-        duration_days = parsed.get("duration_days") or 0
-
+        duration_days  = parsed.get("duration_days")  or 0
         if duration_hours:
             fire_at = now_utc + timedelta(hours=duration_hours)
         elif duration_days:
             fire_at = now_utc + timedelta(days=duration_days)
         else:
-            fire_at = now_utc + timedelta(hours=1)  # default: in 1 hour
+            fire_at = now_utc + timedelta(hours=1)
 
     snapshot = _capture_snapshot(parsed)
 
     return {
-        "task_type": parsed.get("task_type", "custom"),
-        "description": parsed.get("description", "Custom task"),
-        "params": json.dumps(parsed.get("params", {})),
-        "fire_at": fire_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "task_type":       parsed.get("task_type", "query_replay"),
+        "description":     parsed.get("description", "Scheduled task"),
+        "params":          json.dumps(params),
+        "fire_at":         fire_at.strftime("%Y-%m-%d %H:%M:%S"),
         "repeat_interval": parsed.get("repeat_interval"),
-        "status": "pending",
-        "initiated_by": initiated_by,
-        "snapshot": json.dumps(snapshot),
+        "status":          "pending",
+        "initiated_by":    initiated_by,
+        "snapshot":        json.dumps(snapshot),
     }
 
 
 def _capture_snapshot(parsed: dict) -> dict:
-    """Capture current financial state relevant to the task for later comparison."""
+    """Capture current state for tasks that need before/after comparison."""
     snapshot = {"captured_at": datetime.utcnow().isoformat()}
+    task_type = parsed.get("task_type", "")
+    if task_type not in ("track_category", "track_total", "threshold_alert"):
+        return snapshot  # query_replay tasks don't need a snapshot
     try:
         from backend.storage.database import db
-        params = parsed.get("params", {})
+        params   = parsed.get("params", {})
         category = params.get("category")
-        task_type = parsed.get("task_type", "")
-
         with db() as conn:
             if category and task_type in ("track_category", "threshold_alert"):
                 row = conn.execute(
-                    """SELECT COALESCE(SUM(amount), 0) as total
-                       FROM transactions
-                       WHERE transaction_type='debit'
-                         AND category = ?
-                         AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')""",
+                    """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+                       WHERE transaction_type='debit' AND category=?
+                         AND strftime('%Y-%m', date)=strftime('%Y-%m','now')""",
                     (category,),
                 ).fetchone()
                 snapshot["category_mtd"] = row["total"]
-                snapshot["category"] = category
-
-            if task_type in ("track_total", "daily_summary"):
+                snapshot["category"]     = category
+            if task_type == "track_total":
                 row = conn.execute(
-                    """SELECT COALESCE(SUM(amount), 0) as total
-                       FROM transactions
+                    """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
                        WHERE transaction_type='debit'
-                         AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')"""
+                         AND strftime('%Y-%m', date)=strftime('%Y-%m','now')"""
                 ).fetchone()
                 snapshot["total_mtd"] = row["total"]
-
-            if task_type == "monitor_investments":
-                holdings = conn.execute(
-                    """SELECT ticker, name, total_value, gain_loss, gain_loss_pct
-                       FROM investment_holdings h
-                       WHERE as_of_date = (SELECT MAX(as_of_date) FROM investment_holdings)
-                       ORDER BY gain_loss ASC"""
-                ).fetchall()
-                snapshot["holdings"] = [dict(r) for r in holdings]
-
-            if task_type == "balance_check":
-                accounts = conn.execute(
-                    """SELECT ta.institution, ta.name, ta.balance_ledger
-                       FROM teller_accounts ta
-                       JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
-                       WHERE te.status = 'active'"""
-                ).fetchall()
-                snapshot["balances"] = [dict(a) for a in accounts]
-
     except Exception as exc:
         logger.warning("[TaskParser] Snapshot capture failed: %s", exc)
-
     return snapshot
 
 

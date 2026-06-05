@@ -84,7 +84,9 @@ def _run_task_logic(task: dict) -> dict:
     params = json.loads(task.get("params") or "{}")
     snapshot = json.loads(task.get("snapshot") or "{}")
 
-    if task_type == "track_category":
+    if task_type == "query_replay":
+        return _execute_query_replay(params, snapshot)
+    elif task_type == "track_category":
         return _execute_track_category(params, snapshot)
     elif task_type == "track_total":
         return _execute_track_total(params, snapshot)
@@ -104,6 +106,19 @@ def _run_task_logic(task: dict) -> dict:
         return _execute_expense_report(params, snapshot)
     else:
         return _execute_custom(task, params, snapshot)
+
+
+def _execute_query_replay(params: dict, snapshot: dict) -> dict:
+    """
+    Generic executor: replays the stored query through handle_finance_command().
+    Any query that works in real-time works here too — no special casing needed.
+    """
+    from backend.agent.engine import handle_finance_command
+    query = params.get("query", "")
+    if not query:
+        return {"summary": "No query stored for this scheduled task."}
+    result = handle_finance_command(query)
+    return {"summary": result.get("answer", "No result.")}
 
 
 def _execute_track_category(params: dict, snapshot: dict) -> dict:
