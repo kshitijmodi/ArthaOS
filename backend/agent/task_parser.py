@@ -21,6 +21,64 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+# ── Task-type override helpers ───────────────────────────────────────────────
+
+_BROKER_MAP = {
+    "robinhood":           "Robinhood",
+    "schwab":              "Charles Schwab",
+    "charles schwab":      "Charles Schwab",
+    "fidelity":            "Fidelity",
+    "401k":                "Fidelity",
+    "interactive brokers": "Interactive Brokers - US",
+}
+_HOLDINGS_PAT = re.compile(
+    r"\b(stocks?|holdings?|positions?|shares?|portfolio|investments?\s+total|total\s+investments?)\b",
+    re.IGNORECASE,
+)
+_INVEST_PAT  = re.compile(r"\b(invest|investments?|401k|brokerage)\b", re.IGNORECASE)
+_ADVICE_PAT  = re.compile(
+    r"\b(advice|advise|recommend|suggest|should\s+i|what\s+to\s+(?:buy|sell|invest)"
+    r"|where\s+to\s+invest|optimize)\b",
+    re.IGNORECASE,
+)
+_BALANCE_PAT = re.compile(r"\b(balance|balances?|account\s+balance|how\s+much)\b", re.IGNORECASE)
+_SAVINGS_PAT = re.compile(
+    r"\b(sav(?:e|ings?)|predict|forecast|month\s*end|end\s+of\s+(?:the\s+)?month)\b",
+    re.IGNORECASE,
+)
+_EXPENSE_PAT = re.compile(r"\b(expense\s+report|spending\s+report|breakdown)\b", re.IGNORECASE)
+
+
+def _override_task_type(query: str, task: dict) -> dict:
+    """
+    Correct LLM task_type misclassifications using reliable regex signal detection.
+    Called after LLM parsing — takes precedence over the LLM's choice.
+    """
+    detected_broker = next((name for kw, name in _BROKER_MAP.items() if kw in query.lower()), None)
+    wants_holdings  = bool(_HOLDINGS_PAT.search(query))
+    has_invest      = bool(_INVEST_PAT.search(query)) or detected_broker is not None
+    wants_advice    = bool(_ADVICE_PAT.search(query))
+
+    if wants_holdings or (has_invest and not wants_advice):
+        task["task_type"] = "monitor_investments"
+        if detected_broker:
+            task.setdefault("params", {})["broker"] = detected_broker
+        task["description"] = f"{detected_broker or 'Investment'} portfolio snapshot"
+    elif task.get("task_type") == "investment_advice" and not wants_advice:
+        task["task_type"] = "monitor_investments"
+        if detected_broker:
+            task.setdefault("params", {})["broker"] = detected_broker
+        task["description"] = f"{detected_broker or 'Investment'} portfolio snapshot"
+    elif _BALANCE_PAT.search(query) and not wants_holdings and not has_invest:
+        task["task_type"] = "balance_check"
+        task["description"] = "Account balance check"
+    elif _SAVINGS_PAT.search(query):
+        task["task_type"] = "predict_savings"
+    elif _EXPENSE_PAT.search(query):
+        task["task_type"] = "expense_report"
+
+    return task
+
 
 def _extract_local_time(query: str) -> str | None:
     """
@@ -138,39 +196,8 @@ def parse_task(query: str) -> dict | None:
             task["params"].pop("fire_at_time", None)  # remove old field if present
             logger.debug("[TaskParser] Regex extracted local time: %s", local_time)
 
-        # Fix task type misclassifications
-        q = query.lower()
-        investment_keywords = r"\b(invest|investments?|portfolio|holdings?|stocks?|401k|fidelity|robinhood|schwab|brokerage)\b"
-        balance_keywords = r"\b(balance|balances?|account\s+balance|how\s+much.*(?:in|have))\b"
-        savings_keywords = r"\b(sav(e|ings?)|predict|forecast|month\s*end)\b"
-        expense_keywords = r"\b(expense\s+report|spending\s+report|breakdown)\b"
-        _broker_map = {
-            "robinhood": "Robinhood",
-            "schwab": "Charles Schwab",
-            "charles schwab": "Charles Schwab",
-            "fidelity": "Fidelity",
-            "401k": "Fidelity",
-            "interactive brokers": "Interactive Brokers - US",
-        }
-        if re.search(investment_keywords, q) and task.get("task_type") in ("track_total", "track_category", "custom"):
-            task["task_type"] = "monitor_investments"
-            # Capture broker if mentioned so the executor can filter
-            detected_broker = None
-            for kw, broker_name in _broker_map.items():
-                if kw in q:
-                    detected_broker = broker_name
-                    break
-            if detected_broker:
-                if "params" not in task:
-                    task["params"] = {}
-                task["params"]["broker"] = detected_broker
-            task["description"] = f"{detected_broker or 'Investment'} portfolio snapshot"
-        elif re.search(balance_keywords, q) and task.get("task_type") in ("track_total", "track_category", "custom"):
-            task["task_type"] = "balance_check"
-        elif re.search(savings_keywords, q) and task.get("task_type") in ("track_total", "custom"):
-            task["task_type"] = "predict_savings"
-        elif re.search(expense_keywords, q) and task.get("task_type") in ("track_total", "custom"):
-            task["task_type"] = "expense_report"
+        # Override LLM task_type — Python signal detection is more reliable than LLM for this
+        task = _override_task_type(query, task)
 
         return task
     except Exception as exc:
