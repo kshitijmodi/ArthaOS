@@ -23,7 +23,10 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const abortCtrlRef = useRef<AbortController>();
   const [categoryList, setCategoryList] = useState<string[]>([...CATEGORIES].sort());
 
   useEffect(() => {
@@ -36,20 +39,12 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [starredOnly, setStarredOnly] = useState(false);
   const [chargesOnly, setChargesOnly] = useState(false);
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const loadIdRef = useRef(0);
-
-  // Debounce search: fire 300ms after typing stops and reset to page 1 atomically
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedSearch(search);
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [search]);
 
   const load = useCallback(async () => {
-    const id = ++loadIdRef.current;
+    abortCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    abortCtrlRef.current = ctrl;
+
     setLoading(true);
     try {
       const res = await getTransactions({
@@ -60,17 +55,16 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
         sort_dir: sortDir,
         starred: starredOnly || undefined,
         charges_only: chargesOnly || undefined,
-        query: debouncedSearch || undefined,
-      });
-      // Discard results from superseded requests
-      if (id === loadIdRef.current) {
-        setTransactions(res.transactions);
-        setTotal(res.total);
-      }
+        query: search || undefined,
+      }, ctrl.signal);
+      setTransactions(res.transactions);
+      setTotal(res.total);
+    } catch (e) {
+      if (e instanceof Error && e.name !== "AbortError") throw e;
     } finally {
-      if (id === loadIdRef.current) setLoading(false);
+      if (!ctrl.signal.aborted) setLoading(false);
     }
-  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly, debouncedSearch]);
+  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly, search]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -113,8 +107,16 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
         <div className="flex items-center gap-2 bg-bg border border-border rounded-xl px-3 py-2 flex-1 min-w-[200px] max-w-xs">
           <Search size={13} className="text-tx-3 shrink-0" />
           <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={e => {
+              const val = e.target.value;
+              setSearchInput(val);
+              clearTimeout(debounceRef.current);
+              debounceRef.current = setTimeout(() => {
+                setSearch(val);
+                setPage(1);
+              }, 300);
+            }}
             placeholder="Search transactions…"
             className="bg-transparent text-sm text-tx placeholder:text-tx-3 outline-none w-full"
           />

@@ -67,13 +67,16 @@ export const dismissAlert = (id: number) =>
 export const snoozeAlert = (id: number, days = 3) =>
   apiFetch(`/alerts/${id}/snooze`, { method: "POST", body: JSON.stringify({ days }) });
 
-export const getTransactions = (params: {
-  page?: number; page_size?: number; category?: string; sort_by?: string; sort_dir?: string;
-  starred?: boolean; charges_only?: boolean; query?: string;
-}) => {
+export const getTransactions = (
+  params: {
+    page?: number; page_size?: number; category?: string; sort_by?: string; sort_dir?: string;
+    starred?: boolean; charges_only?: boolean; query?: string;
+  },
+  signal?: AbortSignal,
+) => {
   const q = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
-  return apiFetch<{ total: number; transactions: Transaction[] }>(`/transactions?${q}`);
+  return apiFetch<{ total: number; transactions: Transaction[] }>(`/transactions?${q}`, { signal });
 };
 
 export const starTransaction = (id: number) =>
