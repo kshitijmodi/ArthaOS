@@ -40,7 +40,7 @@ Your role:
 - For investment/portfolio questions: give specific insights referencing their actual holdings, amounts, and performance
 - For advice questions (what to invest in, how to save more, where to cut): combine their real data with sound financial principles to give personalized, actionable answers
 - For spending questions: reference exact amounts, categories, dates, and merchants
-- For follow-up questions: use conversation history — the user expects you to remember the conversation
+- For follow-up questions and conversational replies: the conversation history is your primary source — read it carefully before looking at reference data
 - If specific data is missing, say so briefly and move on — don't refuse to help
 
 Rules:
@@ -49,7 +49,8 @@ Rules:
 - When a verified total is in context, use it exactly
 - Be direct and specific — reference their actual numbers, not generic percentages
 - Do NOT say "I cannot provide financial advice" — you are analyzing THEIR OWN data to help them
-- If asked about stocks to buy/sell: look at their portfolio, their spending, their cash position, and give a considered personal analysis"""
+- If asked about stocks to buy/sell: look at their portfolio, their spending, their cash position, and give a considered personal analysis
+- NEVER show a list of transactions unless the user explicitly asked for a transaction list"""
 
 
 @dataclass
@@ -110,6 +111,31 @@ _DRILL_STRONG = frozenset([
 
 # Weaker signals — only trigger drill if a category is also present
 _DRILL_WEAK = frozenset(["show", "give", "all", "what are"])
+
+# Hard signals that fresh DB data is required (never skip for these)
+_NEEDS_DB = frozenset([
+    "balance", "net worth", "this month", "last month", "this week", "last week",
+    "last year", "last 30", "last 60", "last 90", "all time",
+    "how much", "total spend", "total spending", "how many",
+    "income", "salary", "paycheck", "payroll", "direct deposit",
+    "investment", "portfolio", "holdings", "401k", "robinhood", "schwab",
+    "fidelity", "brokerage", "interactive broker",
+    "transaction", "transactions", "statement", "charges",
+    "balance", "deposit", "withdrawal", "payment",
+    "capital one", "citibank", "wells fargo", "bilt", "bofa", "bank of america",
+    "alert", "alerts",
+])
+
+# Strong conversational follow-up signals (can answer from history alone)
+_CONV_FOLLOW_UPS = frozenset([
+    "why", "how so", "what do you mean", "can you explain", "elaborate",
+    "tell me more", "more detail", "more details", "go on",
+    "what about", "what else", "any other", "anything else",
+    "you said", "you mentioned", "you told", "earlier you",
+    "which ones", "which one", "like what", "such as", "for example",
+    "will you", "are you going", "when will", "will it",
+    "what will", "what are you", "what were you",
+])
 
 _MONTH_NAMES: dict[str, str] = {
     "january": "01", "jan": "01", "february": "02", "feb": "02",
@@ -555,39 +581,101 @@ def _sql_context(query: str, history: list[dict] | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Conversational detection
+# ---------------------------------------------------------------------------
+
+def is_conversational(query: str, history: list[dict]) -> bool:
+    """Return True if this query is a follow-up answerable from conversation history alone."""
+    if len(history) < 2:
+        return False
+    # Need a prior assistant reply to reference
+    if not any(m.get("role") == "assistant" for m in history[-6:]):
+        return False
+
+    q = query.lower().strip()
+
+    # Hard NO — query requires fresh financial data
+    if any(kw in q for kw in _NEEDS_DB):
+        return False
+    # Any category keyword → need DB
+    if _categories_in_text(q):
+        return False
+    # Time period in query → need DB
+    if _detect_period(q) is not None:
+        return False
+
+    # Strong follow-up signal → YES, skip DB
+    if any(fu in q for fu in _CONV_FOLLOW_UPS):
+        return True
+
+    # Pure reaction / acknowledgment (≤4 words, no financial intent)
+    words = q.split()
+    if len(words) <= 4:
+        return True
+
+    # Short query (≤7 words) with no financial nouns → likely conversational
+    _financial_nouns = {
+        "account", "accounts", "bill", "bills", "charge", "charges", "fee",
+        "fees", "debt", "credit", "debit", "loan", "mortgage", "rent",
+        "savings", "saving", "invest", "investing", "stock", "stocks",
+        "share", "shares", "fund", "funds", "money", "cash", "budget",
+    }
+    if len(words) <= 7 and not any(fn in q for fn in _financial_nouns):
+        return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Main query entry point
 # ---------------------------------------------------------------------------
 
 def query(user_query: str, top_k: int = 3, history: list[dict] | None = None) -> QueryResult:
-    with db() as conn:
-        sql_ctx = _build_context(user_query, history, conn)
+    history = history or []
+    conv = is_conversational(user_query, history)
 
-    # FAISS supplementary context (reduced top_k since DB context is now comprehensive)
-    chunks = search(user_query, top_k=top_k)
-    low_confidence = any(c.get("score", 1.0) < 0.5 for c in chunks)
+    if conv:
+        # Conversational follow-up — history already carries the context, no DB needed
+        logger.debug("is_conversational=True — skipping DB fetch for: %r", user_query)
+        prompt = user_query
+        sql_ctx = ""
+        chunks: list[dict] = []
+        low_confidence = False
+    else:
+        with db() as conn:
+            sql_ctx = _build_context(user_query, history, conn)
 
-    rag_ctx = "\n\n".join(
-        f"[Source: {c.get('source', '?')}] {c['text']}"
-        for c in chunks if c.get("text")
-    )
+        # FAISS supplementary context
+        chunks = search(user_query, top_k=top_k)
+        low_confidence = any(c.get("score", 1.0) < 0.5 for c in chunks)
 
-    context_parts: list[str] = []
-    if sql_ctx:
-        context_parts.append(sql_ctx)
-    if rag_ctx:
-        context_parts.append(f"=== Additional Context ===\n{rag_ctx}")
-
-    if not context_parts:
-        return QueryResult(
-            answer=(
-                "I don't have enough financial data yet. "
-                "Please connect your accounts in Settings and run a sync."
-            ),
-            low_confidence=True,
+        rag_ctx = "\n\n".join(
+            f"[Source: {c.get('source', '?')}] {c['text']}"
+            for c in chunks if c.get("text")
         )
 
-    context = "\n\n".join(context_parts)
-    prompt = f"Financial Context:\n{context}\n\nUser Question: {user_query}\n\nAnswer:"
+        context_parts: list[str] = []
+        if sql_ctx:
+            context_parts.append(sql_ctx)
+        if rag_ctx:
+            context_parts.append(f"=== Additional Context ===\n{rag_ctx}")
+
+        if not context_parts:
+            return QueryResult(
+                answer=(
+                    "I don't have enough financial data yet. "
+                    "Please connect your accounts in Settings and run a sync."
+                ),
+                low_confidence=True,
+            )
+
+        context = "\n\n".join(context_parts)
+        # Question first — LLM anchors on the question, not the data dump
+        prompt = (
+            f"User Question: {user_query}\n\n"
+            f"Financial Reference Data:\n{context}\n\n"
+            f"Answer:"
+        )
 
     answer = complete(prompt, max_tokens=1000, system=SYSTEM_PROMPT, history=history)
 
