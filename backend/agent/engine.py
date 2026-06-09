@@ -835,6 +835,11 @@ _FINANCE_COMMANDS = {
     "watch":     "track",
     "tasks":     "tasks",
     "task":      "tasks",
+    "cancel":    "cancel_task",
+    "delete":    "cancel_task",
+    "remove":    "cancel_task",
+    "stop":      "cancel_task",
+    "disable":   "cancel_task",
 }
 
 # Scheduling intent — any of these patterns means the user wants a future/recurring task,
@@ -905,6 +910,7 @@ _HELP_TEXT = (
     "  run        — run all detection modules now\n"
     "  track      — schedule a monitoring task (natural language)\n"
     "  tasks      — list your active scheduled tasks\n"
+    "  cancel     — cancel a scheduled task (by #ID or description)\n"
     "  help       — show this message\n\n"
     "Track examples:\n"
     "  track my dining spend for 3 days\n"
@@ -1242,6 +1248,101 @@ def _handle_track_command(query: str) -> dict:
         }
 
 
+_CANCEL_KEYWORDS = re.compile(
+    r"\b(?:cancel|delete|remove|stop|turn\s+off|disable)\b"
+    r".*\b(?:task|alert|schedule|scheduled|reminder|report|daily|weekly|hourly|recurring)\b"
+    r"|\b(?:cancel|delete|remove|stop|turn\s+off|disable)\b.*\btask\s*#?\d+\b"
+    r"|\b(?:cancel|delete|remove)\b\s+(?:that|the|my|all|this|it)\b",
+    re.IGNORECASE,
+)
+
+
+def _handle_cancel_task(query: str) -> dict:
+    """Cancel a scheduled task by ID or fuzzy description match."""
+    q = query.lower()
+
+    # Extract explicit task ID: "task #5", "#5", "task5", "id 5"
+    id_match = re.search(r"task\s*#?\s*(\d+)|#\s*(\d+)|\bid\s+(\d+)\b", q)
+    task_id = None
+    if id_match:
+        task_id = int(next(g for g in id_match.groups() if g is not None))
+
+    with db() as conn:
+        if task_id:
+            row = conn.execute(
+                "SELECT id, description FROM scheduled_tasks WHERE id=? AND status IN ('pending','running')",
+                (task_id,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE scheduled_tasks SET status='cancelled' WHERE id=?", (task_id,)
+                )
+                return {
+                    "answer": f"✅ Cancelled task #{task_id}: {row['description']}",
+                    "low_confidence": False,
+                    "sources": [],
+                }
+            return {
+                "answer": f"Task #{task_id} not found or already completed/cancelled.",
+                "low_confidence": False,
+                "sources": [],
+            }
+
+        # No explicit ID — load all active tasks and fuzzy-match on description
+        rows = conn.execute(
+            """SELECT id, description, fire_at, repeat_interval
+               FROM scheduled_tasks
+               WHERE status IN ('pending', 'running')
+               ORDER BY fire_at ASC"""
+        ).fetchall()
+
+        if not rows:
+            return {
+                "answer": "No active tasks to cancel.",
+                "low_confidence": False,
+                "sources": [],
+            }
+
+        # Score each task by keyword overlap with the query
+        meaningful = [w for w in re.findall(r'\b\w{4,}\b', q)
+                      if w not in ("cancel", "delete", "remove", "stop", "task", "alert",
+                                   "schedule", "scheduled", "that", "this", "please", "want")]
+        scored = []
+        for row in rows:
+            desc = row["description"].lower()
+            score = sum(1 for kw in meaningful if kw in desc)
+            scored.append((score, row))
+
+        best_score = max(s for s, _ in scored)
+
+        if best_score > 0:
+            top = [r for s, r in scored if s == best_score]
+            if len(top) == 1:
+                r = top[0]
+                conn.execute(
+                    "UPDATE scheduled_tasks SET status='cancelled' WHERE id=?", (r["id"],)
+                )
+                return {
+                    "answer": f"✅ Cancelled task #{r['id']}: {r['description']}",
+                    "low_confidence": False,
+                    "sources": [],
+                }
+
+        # Ambiguous or no match — list all and ask for ID
+        lines = []
+        for r in rows[:10]:
+            repeat = f" ↻ {r['repeat_interval']}" if r["repeat_interval"] else ""
+            lines.append(f"  #{r['id']} — {r['description']} (fires: {r['fire_at']}{repeat})")
+        return {
+            "answer": (
+                "Which task would you like to cancel? Reply with the task #ID:\n\n"
+                + "\n".join(lines)
+            ),
+            "low_confidence": False,
+            "sources": [],
+        }
+
+
 def _handle_list_tasks() -> dict:
     """List active scheduled tasks."""
     with db() as conn:
@@ -1279,7 +1380,15 @@ def _dispatch_finance_command(query: str, history: list[dict] | None = None) -> 
     action = _FINANCE_COMMANDS.get(sub, None)
     logger.debug("[Finance] _dispatch: query=%r → sub=%r → action=%r", query, sub, action)
 
+    if action == "cancel_task":
+        return _handle_cancel_task(query)
+
     if action is None:
+        # Cancel intent — catches mid-sentence phrasing ("please cancel my daily alert")
+        if _CANCEL_KEYWORDS.search(query):
+            logger.debug("[Finance] Cancel intent detected — routing to cancel handler")
+            return _handle_cancel_task(query)
+
         # Scheduling intent — future/recurring tasks go to the task parser
         if _SCHEDULE_KEYWORDS.search(query):
             logger.debug("[Finance] Scheduling intent detected — routing to task parser")
