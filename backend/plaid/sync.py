@@ -68,20 +68,27 @@ def _categorize_tx(tx: dict) -> str:
     return categorize_static(description)
 
 
-def _prepare_tx(tx: dict, acct_map: dict) -> dict:
+def _prepare_tx(tx: dict, acct_map: dict, institution: str | None = None) -> dict:
     """Convert a raw Plaid transaction dict to a flat insert-ready dict."""
     raw = float(tx.get("amount", 0))
     tx_type = "debit" if raw >= 0 else "credit"
     amount  = abs(raw)
     description = tx.get("name", "") or tx.get("merchant_name", "") or ""
     acct = acct_map.get(tx.get("account_id", ""), {})
+
+    # Bilt credit transactions (rent/utilities paid via Bilt) should be categorized as Transfer
+    # to avoid double-counting with the actual BofA debit
+    if tx_type == "credit" and institution == "Bilt":
+        category = "Transfer"
+    else:
+        category = _categorize_tx(tx)
     return {
         "source_file": f"plaid:{tx['transaction_id']}",
         "date":        tx.get("date", dt_date.today().isoformat()),
         "description": description,
         "amount":      amount,
         "tx_type":     tx_type,
-        "category":    _categorize_tx(tx),
+        "category":    category,
         "acc_display": acct.get("name", ""),
     }
 
@@ -120,8 +127,8 @@ def sync_item(item_id: str, access_token: str, institution: str) -> dict:
     except Exception as exc:
         logger.debug("[PlaidSync] Investments unavailable for %s: %s", institution, exc)
 
-    # Pre-process transactions
-    prepared_added = [_prepare_tx(tx, acct_map) for tx in tx_result["added"]]
+    # Pre-process transactions (pass institution so Bilt credits are categorized as Transfer)
+    prepared_added = [_prepare_tx(tx, acct_map, institution=institution) for tx in tx_result["added"]]
     removed_source_files = [f"plaid:{r['transaction_id']}" for r in tx_result.get("removed", [])]
 
     # Pre-process investment holdings

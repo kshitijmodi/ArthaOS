@@ -199,15 +199,24 @@ def _llm_categorize(description: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def categorize(description: str, keyword_only: bool = False) -> str:
+def categorize(description: str, keyword_only: bool = False, tx_type: str | None = None, institution: str | None = None) -> str:
     """
     Categorize a transaction description.
     Order: user correction → learned rules → keyword rules → LLM fallback.
 
-    Pass keyword_only=True to skip the LLM fallback (avoids Groq rate limiting
-    during bulk sync operations where holding a DB lock during retries causes
-    "database is locked" errors for all other writers).
+    Args:
+        description: transaction description
+        keyword_only: skip LLM fallback (for bulk sync)
+        tx_type: 'debit' or 'credit' — used to handle special cases
+        institution: 'Bilt', 'BofA', etc. — used to handle special cases
+
+    Special case: Bilt credit transactions (rent/utilities paid via Bilt to BofA)
+    should be categorized as Transfer, not Rent/Utilities, to avoid double-counting.
     """
+    # Special case: Bilt credit txns should be Transfer (payment routing), not the underlying category
+    if tx_type == "credit" and institution == "Bilt":
+        return "Transfer"
+
     user_cat = _get_user_correction(description)
     if user_cat:
         return user_cat
@@ -226,14 +235,23 @@ def categorize(description: str, keyword_only: bool = False) -> str:
     return _llm_categorize(description)
 
 
-def categorize_static(description: str) -> str:
+def categorize_static(description: str, tx_type: str | None = None, institution: str | None = None) -> str:
     """
     Categorize using ONLY static keyword rules — no user corrections, no learned
     rules, no LLM.  Use this during data import (Teller sync, PDF ingestion) so
     learned rules from one source can't contaminate another source's categories.
     User corrections applied afterward (via re-categorize or manual edit) are
     always respected because they have the highest priority in categorize().
+
+    Args:
+        description: transaction description
+        tx_type: 'debit' or 'credit' — for special case handling
+        institution: institution name — for special case handling
     """
+    # Special case: Bilt credit txns are payment routing, not the underlying category
+    if tx_type == "credit" and institution == "Bilt":
+        return "Transfer"
+
     rule_cat = _rule_match(description)
     return rule_cat if rule_cat else "Miscellaneous"
 
