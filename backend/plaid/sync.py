@@ -78,7 +78,7 @@ def _prepare_tx(tx: dict, acct_map: dict, institution: str | None = None) -> dic
 
     # Bilt credit transactions (rent/utilities paid via Bilt) should be categorized as Transfer
     # to avoid double-counting with the actual BofA debit
-    if tx_type == "credit" and institution == "Bilt":
+    if tx_type == "credit" and institution and "bilt" in institution.lower():
         category = "Transfer"
     else:
         category = _categorize_tx(tx)

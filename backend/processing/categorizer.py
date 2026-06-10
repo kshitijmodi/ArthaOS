@@ -214,7 +214,7 @@ def categorize(description: str, keyword_only: bool = False, tx_type: str | None
     should be categorized as Transfer, not Rent/Utilities, to avoid double-counting.
     """
     # Special case: Bilt credit txns should be Transfer (payment routing), not the underlying category
-    if tx_type == "credit" and institution == "Bilt":
+    if tx_type == "credit" and institution and "bilt" in institution.lower():
         return "Transfer"
 
     user_cat = _get_user_correction(description)
@@ -249,7 +249,7 @@ def categorize_static(description: str, tx_type: str | None = None, institution:
         institution: institution name — for special case handling
     """
     # Special case: Bilt credit txns are payment routing, not the underlying category
-    if tx_type == "credit" and institution == "Bilt":
+    if tx_type == "credit" and institution and "bilt" in institution.lower():
         return "Transfer"
 
     rule_cat = _rule_match(description)
