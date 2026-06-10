@@ -14,6 +14,17 @@ export function formatCurrency(amount: number, _currency?: string): string {
   }).format(Math.abs(amount));
 }
 
+/** Like formatCurrency but preserves the sign — use for balances that can be negative (CC, loans, net worth). */
+export function formatSigned(amount: number): string {
+  const abs = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Math.abs(amount));
+  return amount < 0 ? `-${abs}` : `+${abs}`;
+}
+
 export function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-US", {
     month: "short",

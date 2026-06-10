@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { AccountsSummary, AccountsDetail, getAccountsDetail, getAccountsSummary, apiFetch } from "@/lib/api";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, formatSigned, cn } from "@/lib/utils";
 
 export type KPIDrillType = "bank" | "cc" | "401k" | "stocks" | "networth";
 
@@ -165,7 +165,7 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                   {detail.cc_accounts.map((a, i) => (
                     <Row key={i} label={`${a.institution} — ${a.name}`} sub={a.subtype} value={fmt(a.balance)} />
                   ))}
-                  <Row label="Total owed" value={fmt(accounts.cc_balance)} bold />
+                  <Row label="Total owed" value={formatSigned(accounts.cc_balance)} bold />
                 </div>
               )}
 
@@ -232,9 +232,9 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                   <Row label="Stocks (Robinhood · Schwab)" value={fmt(accounts.portfolio_stocks)} />
 
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-tx-3 mt-4 mb-3">Liabilities</p>
-                  <Row label="Credit cards" value={fmt(accounts.cc_balance)} />
+                  <Row label="Credit cards" value={formatSigned(accounts.cc_balance)} />
                   {accounts.loan_balance < 0 && (
-                    <Row label="Loans" value={fmt(accounts.loan_balance)} />
+                    <Row label="Loans" value={formatSigned(accounts.loan_balance)} />
                   )}
 
                   <div className="mt-4 pt-4 border-t-2 border-border">
@@ -244,11 +244,11 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                         "text-lg font-bold tabular-nums",
                         accounts.net_worth >= 0 ? "text-income" : "text-expense"
                       )}>
-                        {accounts.net_worth < 0 ? "−" : ""}{fmt(Math.abs(accounts.net_worth))}
+                        {formatSigned(accounts.net_worth)}
                       </p>
                     </div>
                     <p className="text-[11px] text-tx-3 mt-1">
-                      {fmt(accounts.bank_balance)} + {fmt(accounts.portfolio_401k)} + {fmt(accounts.portfolio_stocks)} + {fmt(accounts.cc_balance)}{accounts.loan_balance < 0 ? ` + ${fmt(accounts.loan_balance)}` : ""}
+                      {fmt(accounts.bank_balance)} + {fmt(accounts.portfolio_401k)} + {fmt(accounts.portfolio_stocks)} + {formatSigned(accounts.cc_balance)}{accounts.loan_balance < 0 ? ` + ${formatSigned(accounts.loan_balance)}` : ""}
                     </p>
                   </div>
                 </div>

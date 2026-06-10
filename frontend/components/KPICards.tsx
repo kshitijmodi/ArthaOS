@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { Transaction, getAccountsSummary, AccountsSummary } from "@/lib/api";
 import { KPIDrillType } from "@/components/KPIDrillPanel";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, formatSigned, cn } from "@/lib/utils";
 
 interface Props {
   transactions: Transaction[];
@@ -160,12 +160,12 @@ export default function KPICards({ transactions, allTxns, onDrillDown, onKPIDril
         />
         <Card
           label="CC Balance"
-          value={accounts ? formatCurrency(accounts.cc_balance) : "—"}
+          value={accounts ? formatSigned(accounts.cc_balance) : "—"}
           sub="total owed"
           icon={<CreditCard size={14} className={ccHigh ? "text-expense" : "text-warn"} />}
           iconBg={ccHigh ? "bg-expense/10" : "bg-warn/10"}
           border={ccHigh ? "border-expense/20 hover:border-expense/40" : "border-warn/20 hover:border-warn/40"}
-          accent={ccHigh ? "text-expense" : "text-warn"}
+          accent={accounts && accounts.cc_balance < 0 ? "text-expense" : "text-income"}
           loading={acctLoading}
           onClick={() => onKPIDrillDown("cc")}
         />
@@ -178,7 +178,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, onKPIDril
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Card
               label="Loans Outstanding"
-              value={accounts ? formatCurrency(accounts.loan_balance) : "—"}
+              value={accounts ? formatSigned(accounts.loan_balance) : "—"}
               sub="auto · mortgage · personal"
               icon={<Car size={14} className="text-expense" />}
               iconBg="bg-expense/10" border="border-expense/20 hover:border-expense/40" accent="text-expense"
@@ -208,7 +208,7 @@ export default function KPICards({ transactions, allTxns, onDrillDown, onKPIDril
           onClick={() => onKPIDrillDown("stocks")}
         />
         <Card
-          label="Net Worth" value={accounts ? formatCurrency(Math.abs(nw)) : "—"}
+          label="Net Worth" value={accounts ? formatSigned(nw) : "—"}
           sub={nw >= 0 ? "assets – liabilities" : "net negative"}
           icon={<Scale size={14} className={nw >= 0 ? "text-income" : "text-expense"} />}
           iconBg={nw >= 0 ? "bg-income/10" : "bg-expense/10"}
