@@ -383,9 +383,10 @@ def accounts_summary(as_of: Optional[str] = None):
                 """SELECT COALESCE(SUM(ABS(COALESCE(balance_current, 0))), 0) as total
                    FROM plaid_accounts WHERE lower(type) = 'loan'"""
             ).fetchone()
+            # Negate CC and loan balances (positive balance = amount owed = negative for net worth)
             bank_balance = round(bank_balance + (p_bank_as_of["total"] or 0), 2)
-            cc_balance   = round(cc_balance   + (p_cc_as_of["total"]  or 0), 2)
-            loan_balance = round(loan_balance  + (p_loan_as_of["total"] or 0), 2)
+            cc_balance   = round(-(cc_balance   + (p_cc_as_of["total"]  or 0)), 2)
+            loan_balance = round(-(loan_balance  + (p_loan_as_of["total"] or 0)), 2)
         else:
             # Teller depository (active enrollments only)
             t_bank = conn.execute(
@@ -402,7 +403,7 @@ def accounts_summary(as_of: Optional[str] = None):
             ).fetchone()
             bank_balance = round((t_bank["total"] or 0) + (p_bank["total"] or 0), 2)
 
-            # Teller CC (active enrollments only)
+            # Teller CC (active enrollments only) — negate so positive balance = owed = negative
             t_cc = conn.execute(
                 """SELECT COALESCE(SUM(ABS(COALESCE(a.balance_ledger, 0))), 0) as total
                    FROM teller_accounts a
@@ -410,14 +411,14 @@ def accounts_summary(as_of: Optional[str] = None):
                    WHERE te.status = 'active'
                      AND lower(a.type) IN ('credit','credit_card')"""
             ).fetchone()
-            # Plaid CC
+            # Plaid CC (handles both positive balance owed and negative balance credit)
             p_cc = conn.execute(
-                """SELECT COALESCE(SUM(MAX(0, COALESCE(balance_current, 0))), 0) as total
+                """SELECT COALESCE(SUM(COALESCE(balance_current, 0)), 0) as total
                    FROM plaid_accounts WHERE lower(type) = 'credit'"""
             ).fetchone()
-            cc_balance = round((t_cc["total"] or 0) + (p_cc["total"] or 0), 2)
+            cc_balance = round(-((t_cc["total"] or 0) + (p_cc["total"] or 0)), 2)
 
-            # Teller loans (active enrollments only)
+            # Teller loans (active enrollments only) — negate so loan balance = negative
             t_loan = conn.execute(
                 """SELECT COALESCE(SUM(ABS(COALESCE(a.balance_ledger, a.balance_available, 0))), 0) as total
                    FROM teller_accounts a
@@ -430,7 +431,7 @@ def accounts_summary(as_of: Optional[str] = None):
                 """SELECT COALESCE(SUM(ABS(COALESCE(balance_current, 0))), 0) as total
                    FROM plaid_accounts WHERE lower(type) = 'loan'"""
             ).fetchone()
-            loan_balance = round((t_loan["total"] or 0) + (p_loan["total"] or 0), 2)
+            loan_balance = round(-((t_loan["total"] or 0) + (p_loan["total"] or 0)), 2)
 
         # 401K = Fidelity holdings (always latest snapshot)
         fidelity_row = conn.execute(
@@ -454,7 +455,8 @@ def accounts_summary(as_of: Optional[str] = None):
         ).fetchone()
         portfolio_stocks = round(stocks_row["total"], 2)
 
-    net_worth = round(bank_balance + portfolio_401k + portfolio_stocks - cc_balance - loan_balance, 2)
+    # Net worth = assets - liabilities. CC/loans already negative, so add them directly
+    net_worth = round(bank_balance + portfolio_401k + portfolio_stocks + cc_balance + loan_balance, 2)
 
     return {
         "bank_balance": bank_balance,
@@ -484,9 +486,10 @@ def accounts_detail():
                       COALESCE(balance_available, balance_current, 0) as balance
                FROM plaid_accounts WHERE lower(type) = 'depository'"""
         ).fetchall()
+        # CC balances — negate so owed amount = negative
         teller_cc = conn.execute(
             """SELECT ta.institution, ta.name, ta.type, ta.subtype,
-                      ABS(COALESCE(ta.balance_ledger, 0)) as balance
+                      -(ABS(COALESCE(ta.balance_ledger, 0))) as balance
                FROM teller_accounts ta
                JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
                WHERE te.status = 'active'
@@ -494,12 +497,13 @@ def accounts_detail():
         ).fetchall()
         plaid_cc = conn.execute(
             """SELECT institution, name, type, subtype,
-                      MAX(0, COALESCE(balance_current, 0)) as balance
+                      COALESCE(balance_current, 0) as balance
                FROM plaid_accounts WHERE lower(type) = 'credit'"""
         ).fetchall()
+        # Loan balances — negate so owed amount = negative
         teller_loan = conn.execute(
             """SELECT ta.institution, ta.name, ta.type, ta.subtype,
-                      ABS(COALESCE(ta.balance_ledger, ta.balance_available, 0)) as balance
+                      -(ABS(COALESCE(ta.balance_ledger, ta.balance_available, 0))) as balance
                FROM teller_accounts ta
                JOIN teller_enrollments te ON ta.enrollment_id = te.enrollment_id
                WHERE te.status = 'active'
@@ -507,7 +511,7 @@ def accounts_detail():
         ).fetchall()
         plaid_loan = conn.execute(
             """SELECT institution, name, type, subtype,
-                      ABS(COALESCE(balance_current, 0)) as balance
+                      -(ABS(COALESCE(balance_current, 0))) as balance
                FROM plaid_accounts WHERE lower(type) = 'loan'"""
         ).fetchall()
         recent_txns = conn.execute(

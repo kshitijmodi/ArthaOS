@@ -123,8 +123,9 @@ export default function KPICards({ transactions, allTxns, onDrillDown, onKPIDril
   }, [allTxns]);
 
   const nw = accounts?.net_worth ?? 0;
-  const ccHigh = (accounts?.cc_balance ?? 0) > 5000;
-  const hasLoans = (accounts?.loan_balance ?? 0) > 0;
+  const ccOwed = Math.abs(accounts?.cc_balance ?? 0);
+  const ccHigh = ccOwed > 5000;
+  const hasLoans = (accounts?.loan_balance ?? 0) < 0;  // loan_balance is negative when owing
   const isPeriod = !!asOf;
 
   return (

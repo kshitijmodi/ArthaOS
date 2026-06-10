@@ -232,9 +232,9 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                   <Row label="Stocks (Robinhood · Schwab)" value={fmt(accounts.portfolio_stocks)} />
 
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-tx-3 mt-4 mb-3">Liabilities</p>
-                  <Row label="Credit cards" value={`−${fmt(accounts.cc_balance)}`} />
-                  {accounts.loan_balance > 0 && (
-                    <Row label="Loans" value={`−${fmt(accounts.loan_balance)}`} />
+                  <Row label="Credit cards" value={fmt(accounts.cc_balance)} />
+                  {accounts.loan_balance < 0 && (
+                    <Row label="Loans" value={fmt(accounts.loan_balance)} />
                   )}
 
                   <div className="mt-4 pt-4 border-t-2 border-border">
@@ -248,7 +248,7 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                       </p>
                     </div>
                     <p className="text-[11px] text-tx-3 mt-1">
-                      {fmt(accounts.bank_balance)} + {fmt(accounts.portfolio_401k)} + {fmt(accounts.portfolio_stocks)} − {fmt(accounts.cc_balance)}{accounts.loan_balance > 0 ? ` − ${fmt(accounts.loan_balance)}` : ""}
+                      {fmt(accounts.bank_balance)} + {fmt(accounts.portfolio_401k)} + {fmt(accounts.portfolio_stocks)} + {fmt(accounts.cc_balance)}{accounts.loan_balance < 0 ? ` + ${fmt(accounts.loan_balance)}` : ""}
                     </p>
                   </div>
                 </div>
