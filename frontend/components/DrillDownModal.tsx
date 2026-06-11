@@ -100,7 +100,7 @@ export default function DrillDownModal({ label, transactions, onClose }: Props) 
                   </div>
                   <span className={cn(
                     "font-semibold text-sm tabular-nums shrink-0",
-                    t.transaction_type === "credit" ? "text-income" : "text-tx"
+                    t.transaction_type === "credit" ? "text-income" : "text-expense"
                   )}>
                     {t.transaction_type === "credit" ? "+" : "−"}{formatCurrency(t.amount)}
                   </span>

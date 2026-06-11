@@ -224,7 +224,7 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
                       </td>
                       <td className={cn(
                         "py-3.5 px-4 text-right font-semibold tabular-nums",
-                        tx.transaction_type === "credit" ? "text-income" : "text-tx"
+                        tx.transaction_type === "credit" ? "text-income" : "text-expense"
                       )}>
                         {tx.transaction_type === "credit" ? "+" : "−"}
                         {formatCurrency(tx.amount)}
