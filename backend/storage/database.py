@@ -398,6 +398,23 @@ def _run_migrations():
             CREATE INDEX IF NOT EXISTS idx_plaid_accounts_type ON plaid_accounts(type);
         """)
 
+        # category_corrections — add description/amount fingerprint so corrections survive resync
+        for col_sql in [
+            "ALTER TABLE category_corrections ADD COLUMN description TEXT",
+            "ALTER TABLE category_corrections ADD COLUMN amount REAL",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception:
+                pass  # column already exists
+        # Back-fill description/amount for existing corrections from joined transactions
+        conn.execute("""
+            UPDATE category_corrections
+            SET description = (SELECT description FROM transactions WHERE id = category_corrections.transaction_id),
+                amount      = (SELECT amount      FROM transactions WHERE id = category_corrections.transaction_id)
+            WHERE description IS NULL
+        """)
+
         # scheduled_tasks — added after initial deployment
         conn.execute("""CREATE TABLE IF NOT EXISTS scheduled_tasks (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,

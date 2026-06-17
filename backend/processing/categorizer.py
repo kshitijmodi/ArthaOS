@@ -263,21 +263,59 @@ def apply_correction(transaction_id: int, new_category: str) -> bool:
     from backend.storage.database import db
     with db() as conn:
         row = conn.execute(
-            "SELECT category FROM transactions WHERE id = ?", (transaction_id,)
+            "SELECT category, description, amount FROM transactions WHERE id = ?", (transaction_id,)
         ).fetchone()
         if not row:
             return False
         old_category = row["category"]
+        description  = row["description"]
+        amount       = row["amount"]
         conn.execute(
             "UPDATE transactions SET category = ?, category_source = 'user' WHERE id = ?",
             (new_category, transaction_id),
         )
         conn.execute(
-            "INSERT INTO category_corrections (transaction_id, old_category, new_category) VALUES (?, ?, ?)",
-            (transaction_id, old_category, new_category),
+            """INSERT INTO category_corrections
+               (transaction_id, old_category, new_category, description, amount)
+               VALUES (?, ?, ?, ?, ?)""",
+            (transaction_id, old_category, new_category, description, amount),
         )
     invalidate_learned_rules()
     return True
+
+
+def reapply_corrections_after_sync() -> int:
+    """
+    After a sync re-inserts transactions with new IDs, re-apply all saved user
+    corrections by matching on description (case-insensitive exact match).
+    Updates both the transaction row and the correction's transaction_id pointer.
+    """
+    from backend.storage.database import db
+    with db() as conn:
+        corrections = conn.execute(
+            """SELECT id, description, new_category FROM category_corrections
+               WHERE description IS NOT NULL"""
+        ).fetchall()
+
+        updated = 0
+        for corr in corrections:
+            rows = conn.execute(
+                """SELECT id FROM transactions
+                   WHERE LOWER(description) = LOWER(?)
+                   AND category_source != 'user'""",
+                (corr["description"],)
+            ).fetchall()
+            for tx in rows:
+                conn.execute(
+                    "UPDATE transactions SET category = ?, category_source = 'user' WHERE id = ?",
+                    (corr["new_category"], tx["id"]),
+                )
+                conn.execute(
+                    "UPDATE category_corrections SET transaction_id = ? WHERE id = ?",
+                    (tx["id"], corr["id"]),
+                )
+                updated += 1
+    return updated
 
 
 def apply_bulk_correction(transaction_ids: list[int], new_category: str) -> int:

@@ -14,7 +14,7 @@ from datetime import date as dt_date
 
 from backend.storage.database import db, is_duplicate_transaction
 from backend.plaid.client import get_accounts, sync_transactions, get_investments
-from backend.processing.categorizer import categorize_static
+from backend.processing.categorizer import categorize_static, reapply_corrections_after_sync
 
 logger = logging.getLogger(__name__)
 
@@ -300,5 +300,10 @@ def sync_all() -> dict:
 
     if errors:
         logger.warning("[PlaidSync] %d item(s) failed: %s", len(errors), ", ".join(errors))
+
+    reapplied = reapply_corrections_after_sync()
+    if reapplied:
+        logger.info("[PlaidSync] Re-applied %d user category corrections after sync", reapplied)
+
     logger.info("[PlaidSync] Sync complete — %d items, %d new txns", len(items), total_txns)
     return {"items": len(items), "new_transactions": total_txns}
