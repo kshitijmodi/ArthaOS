@@ -256,6 +256,23 @@ def categorize_static(description: str, tx_type: str | None = None, institution:
     return rule_cat if rule_cat else "Miscellaneous"
 
 
+def _add_keyword_to_category(conn, category: str, description: str) -> None:
+    """Add description as a keyword to the category for future auto-matching."""
+    keyword = description.strip().lower()
+    if not keyword:
+        return
+    row = conn.execute("SELECT keywords FROM categories WHERE name = ?", (category,)).fetchone()
+    if row is None:
+        return
+    existing = [k.strip() for k in row["keywords"].split(",") if k.strip()]
+    if keyword not in existing:
+        existing.append(keyword)
+        conn.execute(
+            "UPDATE categories SET keywords = ? WHERE name = ?",
+            (",".join(existing), category),
+        )
+
+
 def apply_correction(transaction_id: int, new_category: str) -> bool:
     """Persist a single user category correction and invalidate learned rules."""
     if new_category not in get_valid_categories():
@@ -280,6 +297,8 @@ def apply_correction(transaction_id: int, new_category: str) -> bool:
                VALUES (?, ?, ?, ?, ?)""",
             (transaction_id, old_category, new_category, description, amount),
         )
+        # Add description as a keyword to the category so future transactions auto-match
+        _add_keyword_to_category(conn, new_category, description)
     invalidate_learned_rules()
     return True
 
@@ -315,6 +334,8 @@ def reapply_corrections_after_sync() -> int:
                     (tx["id"], corr["id"]),
                 )
                 updated += 1
+            # Ensure keyword is registered even if no transactions matched
+            _add_keyword_to_category(conn, corr["new_category"], corr["description"])
     return updated
 
 
