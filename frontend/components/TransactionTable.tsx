@@ -1,7 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, AlertCircle, Search, ArrowUpDown, Star, DollarSign } from "lucide-react";
-import { getTransactions, updateCategory, starTransaction, Transaction, apiFetch } from "@/lib/api";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { ChevronLeft, ChevronRight, AlertCircle, Search, ArrowUpDown, Star, DollarSign, Building2, ChevronDown } from "lucide-react";
+import { getTransactions, getTransactionSources, updateCategory, starTransaction, Transaction, apiFetch } from "@/lib/api";
 import { CATEGORIES, formatCurrency, formatDate, cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -25,12 +25,31 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [search, setSearch] = useState("");
   const [categoryList, setCategoryList] = useState<string[]>([...CATEGORIES].sort());
+  const [sourcesFilter, setSourcesFilter] = useState<string[]>([]);
+  const [sourceList, setSourceList] = useState<string[]>([]);
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const sourceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiFetch<{ categories: { name: string }[] }>("/categories")
       .then(r => setCategoryList(r.categories.map(c => c.name).sort()))
       .catch(() => {});
+    getTransactionSources()
+      .then(r => setSourceList(r.sources))
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!sourceOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (sourceRef.current && !sourceRef.current.contains(e.target as Node)) {
+        setSourceOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [sourceOpen]);
+
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -49,13 +68,14 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
         starred: starredOnly || undefined,
         charges_only: chargesOnly || undefined,
         query: search || undefined,
+        sources: sourcesFilter.length > 0 ? sourcesFilter : undefined,
       });
       setTransactions(res.transactions);
       setTotal(res.total);
     } finally {
       setLoading(false);
     }
-  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly, search]);
+  }, [page, categoryFilter, sortDir, starredOnly, chargesOnly, search, sourcesFilter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -114,6 +134,49 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
         </select>
         {filterBtn(starredOnly, "Starred", <Star size={12} />, () => { setStarredOnly(s => !s); setPage(1); })}
         {filterBtn(chargesOnly, "Fees & Interest", <DollarSign size={12} />, () => { setChargesOnly(s => !s); setPage(1); })}
+        {sourceList.length > 0 && (
+          <div className="relative" ref={sourceRef}>
+            <button
+              onClick={() => setSourceOpen(o => !o)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition-all",
+                sourcesFilter.length > 0
+                  ? "border-accent/50 bg-accent/10 text-accent"
+                  : "border-border bg-surface text-tx-2 hover:text-tx hover:border-border/80"
+              )}
+            >
+              <Building2 size={12} />
+              {sourcesFilter.length === 0 ? "All Sources" : sourcesFilter.length === 1 ? sourcesFilter[0] : `${sourcesFilter.length} sources`}
+              <ChevronDown size={11} className={cn("transition-transform", sourceOpen && "rotate-180")} />
+            </button>
+            {sourceOpen && (
+              <div className="absolute top-full left-0 mt-1 z-20 bg-surface border border-border rounded-xl shadow-lg min-w-[180px] py-1 max-h-60 overflow-y-auto">
+                {sourcesFilter.length > 0 && (
+                  <button
+                    onClick={() => { setSourcesFilter([]); setPage(1); }}
+                    className="w-full text-left px-3 py-1.5 text-xs text-tx-3 hover:text-tx hover:bg-elevated transition-colors border-b border-border/40"
+                  >
+                    Clear all
+                  </button>
+                )}
+                {sourceList.map(src => (
+                  <label key={src} className="flex items-center gap-2 px-3 py-1.5 text-xs text-tx hover:bg-elevated cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={sourcesFilter.includes(src)}
+                      onChange={e => {
+                        setSourcesFilter(prev => e.target.checked ? [...prev, src] : prev.filter(s => s !== src));
+                        setPage(1);
+                      }}
+                      className="accent-accent"
+                    />
+                    <span className="truncate">{src}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <button
           onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}
           className="flex items-center gap-1.5 px-3 py-2 bg-bg border border-border rounded-xl text-sm text-tx-2 hover:text-tx transition-colors"
