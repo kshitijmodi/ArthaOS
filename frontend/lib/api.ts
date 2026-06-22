@@ -69,12 +69,19 @@ export const snoozeAlert = (id: number, days = 3) =>
 
 export const getTransactions = (params: {
   page?: number; page_size?: number; category?: string; sort_by?: string; sort_dir?: string;
-  starred?: boolean; charges_only?: boolean; query?: string;
+  starred?: boolean; charges_only?: boolean; query?: string; sources?: string[];
 }) => {
   const q = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined) return;
+    if (Array.isArray(v)) v.forEach(item => q.append(k, item));
+    else q.set(k, String(v));
+  });
   return apiFetch<{ total: number; transactions: Transaction[] }>(`/transactions?${q}`);
 };
+
+export const getTransactionSources = () =>
+  apiFetch<{ sources: string[] }>("/transactions/sources");
 
 export const starTransaction = (id: number) =>
   apiFetch<{ starred: boolean }>(`/transactions/${id}/star`, { method: "PATCH" });

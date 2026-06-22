@@ -7,9 +7,9 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -168,6 +168,15 @@ def finance_command_endpoint(req: QueryRequest):
     }
 
 
+@app.get("/transactions/sources")
+def get_transaction_sources():
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL AND institution != '' ORDER BY institution"
+        ).fetchall()
+    return {"sources": [r["institution"] for r in rows]}
+
+
 @app.get("/transactions")
 def get_transactions(
     page: int = 1,
@@ -179,6 +188,7 @@ def get_transactions(
     starred: Optional[bool] = None,
     charges_only: Optional[bool] = None,
     query: Optional[str] = None,
+    sources: Optional[List[str]] = Query(default=None),
 ):
     allowed_sort = {"date", "amount", "category", "description"}
     if sort_by not in allowed_sort:
@@ -198,8 +208,12 @@ def get_transactions(
     if charges_only is True:
         filters.append("category = 'Fees & Interest'")
     if query:
-        filters.append("description LIKE ?")
-        params.append(f"%{query}%")
+        filters.append("(description LIKE ? OR COALESCE(institution,'') LIKE ? OR COALESCE(account_name,'') LIKE ?)")
+        params.extend([f"%{query}%"] * 3)
+    if sources:
+        placeholders = ",".join("?" * len(sources))
+        filters.append(f"institution IN ({placeholders})")
+        params.extend(sources)
 
     where = " AND ".join(filters)
     offset = (page - 1) * page_size
