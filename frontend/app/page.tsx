@@ -69,6 +69,7 @@ function applyFilters(txns: Transaction[], f: FilterState): Transaction[] {
     }
 
     if (f.categories.length > 0 && !f.categories.includes(t.category)) return false;
+    if (f.sources.length > 0 && (t.institution == null || !f.sources.includes(t.institution))) return false;
     if (f.amountMin > 0 && t.amount < f.amountMin) return false;
     if (f.amountMax > 0 && t.amount > f.amountMax) return false;
     return true;
@@ -80,6 +81,7 @@ export default function Page() {
   const [allTxns, setAllTxns] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
+  const [txnSources, setTxnSources] = useState<string[]>([]);
   const [drillDown, setDrillDown] = useState<{ label: string; txns: Transaction[] } | null>(null);
   const [kpiPanel, setKpiPanel] = useState<KPIDrillType | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -171,7 +173,11 @@ export default function Page() {
               <h1 className="text-xl font-bold text-tx">Transactions</h1>
               <p className="text-sm text-tx-2 mt-1">Full history with search, star, and category editing</p>
             </div>
-            <TransactionTable onCategoryChange={handleCategoryChange} />
+            <TransactionTable
+              onCategoryChange={handleCategoryChange}
+              sources={txnSources}
+              onSourcesChange={setTxnSources}
+            />
           </div>
         )}
         {activeView === "investments" && (

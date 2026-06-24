@@ -11,6 +11,7 @@ export interface FilterState {
   dateFrom: string;
   dateTo: string;
   categories: string[];
+  sources: string[];
   amountMin: number;
   amountMax: number;
 }
@@ -27,6 +28,7 @@ export const defaultFilters: FilterState = {
   dateFrom: "",
   dateTo: "",
   categories: [],
+  sources: [],
   amountMin: 0,
   amountMax: 50000,
 };
@@ -72,6 +74,10 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
   const catRef = useRef<HTMLDivElement>(null);
   const [categoryList, setCategoryList] = useState<string[]>([...CATEGORIES].sort());
 
+  const [srcOpen, setSrcOpen] = useState(false);
+  const srcRef = useRef<HTMLDivElement>(null);
+  const [sourceList, setSourceList] = useState<string[]>([]);
+
   useEffect(() => {
     apiFetch<{ categories: { name: string }[] }>("/categories")
       .then(r => setCategoryList(r.categories.map(c => c.name).sort()))
@@ -79,8 +85,22 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
   }, []);
 
   useEffect(() => {
+    apiFetch<{ sources: string[] }>("/transactions/sources")
+      .then(r => setSourceList(r.sources.sort()))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (catRef.current && !catRef.current.contains(e.target as Node)) setCatOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (srcRef.current && !srcRef.current.contains(e.target as Node)) setSrcOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -93,11 +113,19 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
     onChange({ ...filters, categories: next });
   };
 
+  const toggleSrc = (src: string) => {
+    const next = filters.sources.includes(src)
+      ? filters.sources.filter(s => s !== src)
+      : [...filters.sources, src];
+    onChange({ ...filters, sources: next });
+  };
+
   const monthPills = getMonthPills();
   const weekPills  = getWeekPills();
 
   const hasActive =
     filters.categories.length > 0 ||
+    filters.sources.length > 0 ||
     filters.amountMin > 0 ||
     filters.amountMax < maxAmount;
 
@@ -175,6 +203,68 @@ export default function FilterBar({ filters, onChange, maxAmount = 50000 }: Prop
                 <div className="border-t border-border p-1.5">
                   <button
                     onClick={() => { onChange({ ...filters, categories: [] }); setCatOpen(false); }}
+                    className="w-full text-xs text-expense hover:bg-expense/10 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Clear selection
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Source filter */}
+        <div className="relative" ref={srcRef}>
+          <button
+            onClick={() => setSrcOpen(o => !o)}
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-all",
+              filters.sources.length > 0
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : "border-border bg-surface text-tx-2 hover:text-tx hover:border-border/80"
+            )}
+          >
+            <span>
+              {filters.sources.length === 0 ? "All Sources" : `${filters.sources.length} source${filters.sources.length > 1 ? "s" : ""}`}
+            </span>
+            <ChevronDown size={12} className={cn("transition-transform", srcOpen && "rotate-180")} />
+          </button>
+
+          {srcOpen && (
+            <div className="absolute top-full left-0 mt-1.5 w-52 bg-surface border border-border rounded-xl shadow-2xl z-50 animate-fade-in overflow-hidden">
+              <div className="p-1.5 max-h-60 overflow-y-auto">
+                {sourceList.length === 0 && (
+                  <p className="text-xs text-tx-3 px-3 py-2">No sources found</p>
+                )}
+                {sourceList.map(src => (
+                  <button
+                    key={src}
+                    onClick={() => toggleSrc(src)}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-left transition-colors",
+                      filters.sources.includes(src)
+                        ? "bg-accent/10 text-accent"
+                        : "text-tx-2 hover:text-tx hover:bg-elevated"
+                    )}
+                  >
+                    <span className={cn(
+                      "w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors",
+                      filters.sources.includes(src) ? "bg-accent border-accent" : "border-border"
+                    )}>
+                      {filters.sources.includes(src) && (
+                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                          <path d="M1 4L3 6L7 2" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+                        </svg>
+                      )}
+                    </span>
+                    {src}
+                  </button>
+                ))}
+              </div>
+              {filters.sources.length > 0 && (
+                <div className="border-t border-border p-1.5">
+                  <button
+                    onClick={() => { onChange({ ...filters, sources: [] }); setSrcOpen(false); }}
                     className="w-full text-xs text-expense hover:bg-expense/10 px-3 py-1.5 rounded-lg transition-colors"
                   >
                     Clear selection

@@ -16,16 +16,18 @@ function detectPaymentMethod(desc: string): string {
 
 interface Props {
   onCategoryChange?: (id: number, category: string) => Promise<void>;
+  sources?: string[];
+  onSourcesChange?: (sources: string[]) => void;
 }
 
-export default function TransactionTable({ onCategoryChange }: Props = {}) {
+export default function TransactionTable({ onCategoryChange, sources = [], onSourcesChange }: Props = {}) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [search, setSearch] = useState("");
   const [categoryList, setCategoryList] = useState<string[]>([...CATEGORIES].sort());
-  const [sourcesFilter, setSourcesFilter] = useState<string[]>([]);
+  const [sourcesFilter, setSourcesFilter] = useState<string[]>(sources);
   const [sourceList, setSourceList] = useState<string[]>([]);
   const [sourceOpen, setSourceOpen] = useState(false);
   const sourceRef = useRef<HTMLDivElement>(null);
@@ -49,6 +51,10 @@ export default function TransactionTable({ onCategoryChange }: Props = {}) {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [sourceOpen]);
+
+  useEffect(() => {
+    onSourcesChange?.(sourcesFilter);
+  }, [sourcesFilter, onSourcesChange]);
 
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
