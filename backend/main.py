@@ -458,14 +458,12 @@ def accounts_summary(as_of: Optional[str] = None):
         ).fetchone()
         portfolio_401k = round(fidelity_row["total"], 2)
 
-        # Stocks = Robinhood + Schwab (always latest snapshot)
+        # Stocks = Robinhood + Schwab — use balance_current from plaid_accounts (authoritative total)
         stocks_row = conn.execute(
-            """SELECT COALESCE(SUM(h.total_value), 0) as total
-               FROM investment_holdings h
-               WHERE h.as_of_date = (
-                   SELECT MAX(as_of_date) FROM investment_holdings h2
-                   WHERE h2.broker = h.broker AND h2.account = h.account
-               ) AND (lower(h.broker) LIKE '%robinhood%' OR lower(h.broker) LIKE '%schwab%')"""
+            """SELECT COALESCE(SUM(balance_current), 0) as total
+               FROM plaid_accounts
+               WHERE lower(type) = 'investment'
+               AND (lower(institution) LIKE '%robinhood%' OR lower(institution) LIKE '%schwab%')"""
         ).fetchone()
         portfolio_stocks = round(stocks_row["total"], 2)
 
@@ -511,7 +509,7 @@ def accounts_detail():
         ).fetchall()
         plaid_cc = conn.execute(
             """SELECT institution, name, type, subtype,
-                      COALESCE(balance_current, 0) as balance
+                      -(ABS(COALESCE(balance_current, 0))) as balance
                FROM plaid_accounts WHERE lower(type) = 'credit'"""
         ).fetchall()
         # Loan balances — negate so owed amount = negative
@@ -914,9 +912,9 @@ def investments_summary():
         # Broker names are normalised to lowercase for consistent front-end matching
         portfolio = conn.execute(
             """SELECT lower(broker) as broker, account,
-                      SUM(total_value) as total_value,
+                      SUM(CASE WHEN total_value > 0 THEN total_value ELSE 0 END) as total_value,
                       MAX(as_of_date) as as_of_date,
-                      COUNT(*) as positions
+                      COUNT(CASE WHEN total_value > 0 THEN 1 END) as positions
                FROM investment_holdings h
                WHERE as_of_date = (
                    SELECT MAX(as_of_date) FROM investment_holdings h2
@@ -960,6 +958,15 @@ def investments_summary():
         ).fetchall()
     pl_map = {r["broker"]: {"gain_loss": r["gain_loss"], "gain_loss_day": r["gain_loss_day"]} for r in pl_rows}
 
+    # Use plaid_accounts.balance_current as authoritative total for brokerage accounts
+    with db() as conn:
+        plaid_balances = conn.execute(
+            """SELECT lower(institution) as broker, COALESCE(SUM(balance_current), 0) as total
+               FROM plaid_accounts WHERE lower(type) = 'investment'
+               GROUP BY lower(institution)"""
+        ).fetchall()
+    plaid_balance_map = {r["broker"]: r["total"] for r in plaid_balances}
+
     # Enrich accounts with per-broker P/L — preserve None so frontend can show "—"
     accounts_out = []
     for r in portfolio:
@@ -969,7 +976,13 @@ def investments_summary():
         gld = broker_pl.get("gain_loss_day")
         d["gain_loss"]     = round(gl, 2)  if gl  is not None else None
         d["gain_loss_day"] = round(gld, 2) if gld is not None else None
+        # Override total_value with Plaid's authoritative balance_current if available
+        plaid_total = plaid_balance_map.get(r["broker"])
+        if plaid_total is not None:
+            d["total_value"] = round(plaid_total, 2)
         accounts_out.append(d)
+
+    portfolio_value = sum(d["total_value"] for d in accounts_out)
 
     return {
         "portfolio_value": round(portfolio_value, 2),

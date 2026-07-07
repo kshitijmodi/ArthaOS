@@ -30,14 +30,14 @@ function fmt(n: number) {
   return formatCurrency(n);
 }
 
-function Row({ label, value, sub, bold }: { label: string; value: string; sub?: string; bold?: boolean }) {
+function Row({ label, value, sub, bold, color }: { label: string; value: string; sub?: string; bold?: boolean; color?: string }) {
   return (
     <div className="flex items-center justify-between py-3 border-b border-border/60 last:border-0">
       <div>
         <p className={cn("text-sm text-tx", bold && "font-semibold")}>{label}</p>
         {sub && <p className="text-[11px] text-tx-3 mt-0.5">{sub}</p>}
       </div>
-      <p className={cn("text-sm font-semibold tabular-nums", bold && "text-base")}>{value}</p>
+      <p className={cn("text-sm font-semibold tabular-nums", bold && "text-base", color ?? "text-tx")}>{value}</p>
     </div>
   );
 }
@@ -138,9 +138,9 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-tx-3 mb-2">Accounts</p>
                     {detail.bank_accounts.map((a, i) => (
-                      <Row key={i} label={`${a.institution} — ${a.name}`} sub={a.subtype} value={fmt(a.balance)} />
+                      <Row key={i} label={`${a.institution} — ${a.name}`} sub={a.subtype} value={`+${fmt(a.balance)}`} color="text-income" />
                     ))}
-                    <Row label="Total" value={fmt(accounts.bank_balance)} bold />
+                    <Row label="Total" value={`+${fmt(accounts.bank_balance)}`} bold color="text-income" />
                   </div>
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-tx-3 mb-2">Recent transactions</p>
@@ -163,9 +163,11 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-tx-3 mb-2">Cards</p>
                   {detail.cc_accounts.map((a, i) => (
-                    <Row key={i} label={`${a.institution} — ${a.name}`} sub={a.subtype} value={fmt(a.balance)} />
+                    <Row key={i} label={`${a.institution} — ${a.name}`} sub={a.subtype}
+                      value={formatSigned(a.balance)}
+                      color={a.balance < 0 ? "text-expense" : "text-income"} />
                   ))}
-                  <Row label="Total owed" value={formatSigned(accounts.cc_balance)} bold />
+                  <Row label="Total owed" value={formatSigned(accounts.cc_balance)} bold color={accounts.cc_balance < 0 ? "text-expense" : "text-income"} />
                 </div>
               )}
 
@@ -178,9 +180,9 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                       .filter(a => a.broker.toLowerCase().includes("fidelity"))
                       .map((a, i) => (
                         <Row key={i} label={a.account} sub={a.broker}
-                          value={fmt(a.total_value)} />
+                          value={`+${fmt(a.total_value)}`} color="text-income" />
                       ))}
-                    <Row label="Total" value={fmt(accounts.portfolio_401k)} bold />
+                    <Row label="Total" value={`+${fmt(accounts.portfolio_401k)}`} bold color="text-income" />
                   </div>
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-tx-3 mb-2">Recent activity</p>
@@ -217,9 +219,9 @@ export default function KPIDrillPanel({ type, onClose }: Props) {
                       <Row key={i}
                         label={`${a.broker} — ${a.account}`}
                         sub={`${a.positions} position${a.positions !== 1 ? "s" : ""}`}
-                        value={fmt(a.total_value)} />
+                        value={`+${fmt(a.total_value)}`} color="text-income" />
                     ))}
-                  <Row label="Total stocks" value={fmt(accounts.portfolio_stocks)} bold />
+                  <Row label="Total stocks" value={`+${fmt(accounts.portfolio_stocks)}`} bold color="text-income" />
                 </div>
               )}
 
